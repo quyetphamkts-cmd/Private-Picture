@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS imported(src TEXT PRIMARY KEY, mtime REAL, size INTEGER, vid TEXT);
 CREATE TABLE IF NOT EXISTS person_guess(image_id INTEGER, person_id INTEGER, score REAL, state INTEGER DEFAULT 0,
   PRIMARY KEY(image_id, person_id));
+CREATE INDEX IF NOT EXISTS ix_guess_person ON person_guess(person_id, state);
+CREATE INDEX IF NOT EXISTS ix_label_img ON label_images(image_id);
 CREATE TABLE IF NOT EXISTS face_attr(face_id INTEGER PRIMARY KEY, sk_l REAL, sk_a REAL, sk_b REAL, hr_l REAL, hr_a REAL, hr_b REAL, sharp REAL);
 CREATE TABLE IF NOT EXISTS edit_ts(k TEXT PRIMARY KEY, ts REAL);
 CREATE TRIGGER IF NOT EXISTS t_lm_ins AFTER INSERT ON label_images BEGIN
@@ -133,9 +135,11 @@ class DB:
             one("SELECT COUNT(*) a FROM person_guess WHERE state=2"), one("SELECT COUNT(*) a FROM dup_hidden")))
 
     def snapshot(self):
-        """Ghi dữ liệu xuống đĩa (mã hóa nếu có khóa)."""
+        """Ghi dữ liệu xuống đĩa (mã hóa nếu có khóa). Dữ liệu không đổi kể từ lần ghi trước thì bỏ qua (tránh mã hóa và ghi lại cả tệp hàng trăm MB vô ích)."""
         with self.lock:
             self.con.commit()
+            if self.key is not None and getattr(self, "_snap_changes", None) == self.con.total_changes and os.path.exists(self.path):
+                return
             if self.key is None:
                 try:
                     self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")      # để tệp .db có đủ dữ liệu khi sao lưu
@@ -143,6 +147,7 @@ class DB:
                     pass
                 return
             data = self.con.serialize()
+            self._snap_changes = self.con.total_changes
         tmp = self.path + ".tmp"
         with open(tmp, "wb") as f:
             f.write(seal(self.key, data))

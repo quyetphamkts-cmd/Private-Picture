@@ -1467,7 +1467,7 @@ fun AllPhotos(open: (List<Img>, Int) -> Unit, focus: String? = null, favOnly: Bo
     val v = Store.version
     // mới nhất ở trên cùng; ảnh không rõ ngày xuống cuối
     val favLabel = Store.labels.firstOrNull { it.name == "Yêu thích" }?.id
-    val sorted = remember(Store.images, Store.labelOf, favOnly, favLabel, v) {
+    val sorted = remember(Store.images, Store.labelOf, favOnly, favLabel, if (favOnly) v else 0) {          // chỉ tab Favorite cần tính lại khi thay đổi sao; các tab khác không sắp xếp lại cả thư viện sau mỗi thao tác
         val all = Store.images.sortedByDescending { it.taken }
         if (favOnly) all.filter { favLabel != null && Store.labelOf[it.uid]?.contains(favLabel) == true } else all           // tab Favorite: chỉ những ảnh đã bấm ngôi sao khi xem ảnh
     }

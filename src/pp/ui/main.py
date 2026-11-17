@@ -434,7 +434,11 @@ class MainWindow(QMainWindow):
                                GROUP BY p.id HAVING p.name IS NOT NULL OR COUNT(DISTINCT f.image_id)>=2)""")["c"]
             photos = db.one("SELECT COUNT(*) c FROM images WHERE id NOT IN (SELECT image_id FROM dup_hidden)")["c"]
             from .. import cluster
-            combos = sum(len(v) for v in cluster.mashup_by_count(db).values())
+            sig = db.library_sig()
+            if getattr(self, "_combo_sig", None) != sig:                  # đếm Mashup khá nặng: chỉ tính lại khi thư viện thật sự đổi
+                self._combo_cache = sum(len(v) for v in cluster.mashup_by_count(db).values())
+                self._combo_sig = sig
+            combos = self._combo_cache
             favs = db.one("SELECT COUNT(*) c FROM label_images WHERE label_id=(SELECT id FROM labels WHERE name='Yêu thích')")["c"]
         except Exception:
             return
