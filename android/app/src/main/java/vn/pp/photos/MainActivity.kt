@@ -985,7 +985,6 @@ fun Tile(im: Img, on: Boolean, anySel: Boolean, onToggle: () -> Unit, onOpen: ()
                 FatStar(Modifier.size(11.dp), Color(0xFFFFD05A))
             }
         }
-        }
         if (anySel) {
             val dx = maxWidth * (1f - sc) / 2 + 4.dp                           // góc trên trái của ảnh sau khi thu nhỏ
             val dy = maxHeight * (1f - sc) / 2 + 4.dp
