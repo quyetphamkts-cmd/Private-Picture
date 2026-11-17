@@ -945,6 +945,28 @@ fun LabelActions(uids: List<String>, done: () -> Unit, select: (Set<String>) -> 
     }
 }
 
+/** Ngôi sao "béo" đầy đặn (cánh ngắn và tròn), căn theo khung bao nên nằm chính giữa ô chứa nó. */
+@Composable
+fun FatStar(modifier: Modifier, color: Color) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val w = size.width
+        val r = w * 0.5f
+        val inner = r * 0.56f                                              // cánh bên trong lớn hơn sao thường (0,38) nên ngôi sao đầy đặn
+        val cx = w / 2f
+        val cy = w / 2f + r * 0.0955f                                      // dời xuống để khung bao của ngôi sao (đỉnh trên → hai chân dưới) nằm đúng giữa
+        val path = androidx.compose.ui.graphics.Path()
+        for (k in 0 until 10) {
+            val rr = if (k % 2 == 0) r else inner
+            val ang = Math.toRadians(-90.0 + k * 36.0)
+            val x = cx + (rr * Math.cos(ang)).toFloat(); val y = cy + (rr * Math.sin(ang)).toFloat()
+            if (k == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+        drawPath(path, color)
+        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.12f, join = androidx.compose.ui.graphics.StrokeJoin.Round))      // viền cùng màu bo tròn góc cho mập hơn
+    }
+}
+
 /** Có hiện ngôi sao Yêu thích ở góc ảnh không (tắt ở tab Favorite vì ở đó mọi ảnh đều đã là ảnh yêu thích). */
 val LocalShowStars = androidx.compose.runtime.compositionLocalOf { true }
 
@@ -959,9 +981,10 @@ fun Tile(im: Img, on: Boolean, anySel: Boolean, onToggle: () -> Unit, onOpen: ()
         Thumb(im.uid, Modifier.fillMaxSize().graphicsLayer { scaleX = sc; scaleY = sc }.clip(RoundedCornerShape(corner)))
         val ver = Store.version
         if (LocalShowStars.current && ver >= 0 && Store.isFav(im.uid)) {          // ảnh đã gắn sao Yêu thích: ngôi sao sáng ở góc trên bên trái (khi đang chọn ảnh thì nằm cạnh ô tick)
-            Box(Modifier.align(Alignment.TopStart).padding(start = if (anySel) 34.dp else 5.dp, top = 5.dp).size(18.dp).clip(CircleShape).background(Color(0x66000000)), contentAlignment = Alignment.Center) {        // ngôi sao trong hình tròn nhỏ, cùng kiểu với trái tim trên thẻ người ở Model
-                Text("★", color = Color(0xFFFFD05A), fontSize = 11.sp, lineHeight = 11.sp)
+            Box(Modifier.align(Alignment.TopStart).padding(5.dp).size(18.dp).clip(CircleShape).background(Color(0x66000000)), contentAlignment = Alignment.Center) {        // luôn ở đúng góc này (ô tick che lên khi đang chọn); ngôi sao vẽ nét, nằm chính giữa hình tròn
+                FatStar(Modifier.size(11.dp), Color(0xFFFFD05A))
             }
+        }
         }
         if (anySel) {
             val dx = maxWidth * (1f - sc) / 2 + 4.dp                           // góc trên trái của ảnh sau khi thu nhỏ
