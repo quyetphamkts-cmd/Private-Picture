@@ -1569,7 +1569,9 @@ fun CoverPhoto(pid: Int, sig: String?, modifier: Modifier) {
 fun PersonCard(p: Person, cover: String?, cols: Int, onOpen: (Person) -> Unit, nameFs: Float? = null) {
     val fs = nameFs ?: (if (cols <= 3) 12f else 10f)           // cỡ chữ chung cho cả lưới (tính để tên dài nhất vẫn vừa một dòng)
     val fav = p.id in Store.favPersons
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(9.dp)).background(Color(0xFF3A3226)).clickable { onOpen(p) }) {
+    val pending = Store.suggestionsOf(p.id).isNotEmpty()                      // còn ảnh đề xuất chưa xác nhận: viền vàng đồng mảnh quanh thẻ (đứng yên, không tốn pin)
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(9.dp)).background(Color(0xFF3A3226)).clickable { onOpen(p) }
+        .then(if (pending) Modifier.border(2.dp, Brass, RoundedCornerShape(9.dp)) else Modifier)) {
         val pc = Store.covers[p.id]
         if (pc != null) {
             CoverPhoto(p.id, pc, Modifier.fillMaxSize())            // ảnh profile do PC chọn tự động và cắt sẵn
