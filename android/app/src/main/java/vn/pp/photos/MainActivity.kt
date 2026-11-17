@@ -381,7 +381,7 @@ fun Main() {
         scope.launch {
             try { Store.setCloth(ids, code) } catch (e: Exception) { }
             Store.selected = Store.selected - ids.toSet()
-            undo = UndoItem("Đã chuyển ${ids.size} ảnh sang $name", ids) {
+            undo = UndoItem("Đã chuyển sang $name", ids) {
                 for (c in listOf("cloth", "nude")) { val g = prev.filter { it.second == c }.map { it.first }; if (g.isNotEmpty()) Store.setCloth(g, c) }
                 val none = prev.filter { it.second == null }.map { it.first }
                 if (none.isNotEmpty()) Store.clearCloth(none)
@@ -399,7 +399,7 @@ fun Main() {
                         scope.launch {
                             try { Store.personRemove(pp, ids) } catch (e: Exception) { }
                             Store.selected = Store.selected - ids.toSet()
-                            undo = UndoItem("Đã loại ${ids.size} ảnh khỏi danh sách", ids) { Store.personRestore(pp, ids) }
+                            undo = UndoItem("Đã loại khỏi danh sách", ids) { Store.personRestore(pp, ids) }
                         }
                     }, { screen = Screen.Suggest(s.p) }) { screen = Screen.Tabs }
                     is Screen.Suggest -> SuggestScreen(s.p, open,
@@ -408,7 +408,7 @@ fun Main() {
                             if (ids.isNotEmpty()) scope.launch {
                                 try { Store.guessAccept(pp, ids) } catch (e: Exception) { }
                                 Store.selected = Store.selected - ids.toSet()
-                                undo = UndoItem("Đã xác nhận ${ids.size} ảnh đúng là ${pp.name.ifEmpty { "người này" }}", ids) { Store.personRemove(pp, ids); Store.guessRestore(pp, ids) }
+                                undo = UndoItem("Đã xác nhận đúng", ids) { Store.personRemove(pp, ids); Store.guessRestore(pp, ids) }
                             }
                         },
                         onAdd = { dlg = "add" },                                      // người + : thêm vào tên khác
@@ -417,7 +417,7 @@ fun Main() {
                             if (ids.isNotEmpty()) scope.launch {
                                 try { Store.guessReject(pp, ids) } catch (e: Exception) { }
                                 Store.selected = Store.selected - ids.toSet()
-                                undo = UndoItem("Đã loại ${ids.size} ảnh khỏi đề xuất", ids) { Store.guessRestore(pp, ids) }
+                                undo = UndoItem("Đã loại khỏi đề xuất", ids) { Store.guessRestore(pp, ids) }
                             }
                         },
                         onLocate = { val u = here.firstOrNull(); if (u != null) { Store.selected = emptySet(); screen = Screen.Tabs; area = "all"; locateUid = u } },
@@ -443,11 +443,14 @@ fun Main() {
                 }
                 undo?.let { u ->                                           // vừa thao tác: có nút Hoàn tác phòng bấm nhầm; hoàn tác xong các ảnh vừa chọn được chọn lại
                     LaunchedEffect(u) { kotlinx.coroutines.delay(20000); if (undo === u) undo = null }
-                    Row(Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp).shadow(6.dp, RoundedCornerShape(24.dp)).background(Color(0xFF2B261E), RoundedCornerShape(24.dp)).padding(start = 16.dp, end = 6.dp),
+                    // một dòng chữ gọn: "Đã xác nhận đúng  Hoàn tác" (không còn hộp to)
+                    Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).background(Color(0xE62B261E), RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text(u.text, color = Color.White)
-                        TextButton({ scope.launch { try { u.revert() } catch (e: Exception) { }; undo = null; Store.selected = Store.selected + u.uids } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                        Text(u.text, color = Color.White, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        Text("Hoàn tác", Modifier.clickable { scope.launch { try { u.revert() } catch (e: Exception) { }; undo = null; Store.selected = Store.selected + u.uids } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+                            color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
                     }
+                }
                 }
             }
             if (sel.isNotEmpty() && here.isEmpty() && viewer == null && !personView) {
@@ -464,7 +467,7 @@ fun Main() {
                             scope.launch {
                                 try { Store.personRemove(pp, ids) } catch (e: Exception) { }
                                 Store.selected = Store.selected - ids.toSet()
-                                undo = UndoItem("Đã loại ${ids.size} ảnh khỏi danh sách", ids) { Store.personRestore(pp, ids) }
+                                undo = UndoItem("Đã loại khỏi danh sách", ids) { Store.personRestore(pp, ids) }
                             }
                         }
                     }
@@ -501,7 +504,7 @@ fun Main() {
                 try { Store.personAdd(pk, ids) } catch (e: Exception) { }
                 (screen as? Screen.Suggest)?.p?.let { sp -> try { Store.guessReject(sp, ids) } catch (e: Exception) { } }
                 Store.selected = Store.selected - ids.toSet()
-                undo = UndoItem("Đã thêm ${ids.size} ảnh vào ${pk.name.ifEmpty { "Chưa đặt tên" }}", ids) { Store.personRemove(pk, ids) }
+                undo = UndoItem("Đã thêm vào ${pk.name.ifEmpty { "Chưa đặt tên" }}", ids) { Store.personRemove(pk, ids) }
             }
         }) { Text("Thêm") } },
         dismissButton = { TextButton({ dlg = "" }) { Text("Hủy") } })
@@ -513,7 +516,7 @@ fun Main() {
                 try {
                     val np = Store.personCreate(nm, ids)
                     (screen as? Screen.Suggest)?.p?.let { sp -> try { Store.guessReject(sp, ids) } catch (e: Exception) { } }
-                    undo = UndoItem("Đã tạo “${nm.trim()}” với ${ids.size} ảnh", ids) { Store.personRemove(np, ids) }
+                    undo = UndoItem("Đã tạo “${nm.trim()}”", ids) { Store.personRemove(np, ids) }
                 } catch (e: Exception) { }
                 Store.selected = Store.selected - ids.toSet()
             }
