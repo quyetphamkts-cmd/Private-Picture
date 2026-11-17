@@ -1961,7 +1961,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, onPerson: (
                     }) { BtnIcon("remove") }
                     RoundBtn(onClick = { onLocate(cur) }) { BtnIcon("enter") }
                 })
-            val labs = Store.labelsOn(listOf(cur.uid)).map { it.first.name }
+            val labs = Store.labelsOn(listOf(cur.uid)).map { it.first.name }.filter { it != "Yêu thích" }      // ngôi sao đã thể hiện ở nút sao, không ghi lại thành chữ "Nhãn: Yêu thích"
             // phía dưới gọn: Name (đầy đủ, vuốt ngang nếu dài) rồi dòng ngày chụp · cỡ ảnh ở bên trái, số thứ tự ảnh ở góc phải
             Column(Modifier.fillMaxWidth().background(Color(0x99000000)).padding(horizontal = 12.dp, vertical = 6.dp).align(Alignment.BottomCenter)) {
                 val ppl = (Store.personOf[cur.uid] ?: emptyList<Int>()).mapNotNull { id -> Store.persons.firstOrNull { it.id == id } }

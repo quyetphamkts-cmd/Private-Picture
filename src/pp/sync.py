@@ -219,6 +219,11 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
         _cl.demote_extra_names(db)                            # ảnh một người chỉ mang một tên; tên thừa thành dự phòng
     except Exception:
         pass
+    try:
+        from . import autolabel as _al
+        _al.strip_favorite_auto(db)                          # ngôi sao chỉ do bạn tự bấm: gỡ các ngôi sao app từng tự gán nhầm
+    except Exception:
+        pass
     persons = [{"id": p["id"], "name": p["name"], "n": p["n"]} for p in db.persons()]
     link = []
     for p in persons:

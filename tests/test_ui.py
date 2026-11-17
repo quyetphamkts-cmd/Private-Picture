@@ -1024,3 +1024,26 @@ def test_library_change_triggers_sync_and_phone_inbox_is_polled(tmp_path, monkey
     (inbox / "android-1.pe").write_bytes(b"x")
     w.poll_phone()
     assert started == [1]                                            # điện thoại vừa gửi chỉnh sửa: nhận ngay
+
+
+def test_favorite_star_is_never_auto_assigned_and_old_auto_stars_are_removed(tmp_path):
+    import numpy as np
+    from pp import autolabel
+    from pp.db import DB, vec_to_blob
+    db = DB(str(tmp_path / "f.db"))
+    fav = db.x("INSERT INTO labels(name) VALUES('Yêu thích')").lastrowid
+    other = db.x("INSERT INTO labels(name) VALUES('Biển')").lastrowid
+    base = np.ones(512, np.float32) / np.sqrt(512)
+    ids = []
+    for j in range(8):
+        iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb,clip) VALUES(?,?,?,?,?,?,?)", (f"/x/{j}.jpg", 1, 1, 9, 9, "t", vec_to_blob(base))).lastrowid
+        ids.append(iid)
+    for i in ids[:3]:
+        db.x("INSERT INTO label_images VALUES(?,?)", (fav, i))              # 3 ảnh bạn tự gắn sao
+    for i in ids[3:6]:
+        db.x("INSERT INTO label_images VALUES(?,?)", (other, i))
+    assert fav not in autolabel.suggest(db)                                    # không bao giờ gợi ý / tự gán ngôi sao
+    db.x("INSERT INTO label_images VALUES(?,?)", (fav, ids[7]))                # ngôi sao do bản cũ tự gán
+    db.x("INSERT INTO label_auto VALUES(?,?,1)", (fav, ids[7]))
+    assert autolabel.strip_favorite_auto(db) == 1
+    assert set(db.label_ids(fav)) == set(ids[:3])                              # ngôi sao tự bấm vẫn còn, ngôi sao tự gán đã bị gỡ
