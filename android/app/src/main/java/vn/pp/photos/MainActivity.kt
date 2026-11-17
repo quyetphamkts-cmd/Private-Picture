@@ -343,6 +343,7 @@ fun Main() {
     var area by remember { mutableStateOf("settings") }              // mở ở Cài đặt (không có ảnh) để người xung quanh không nhìn thấy ảnh riêng tư; còn "model", "all", "combo", "fav"
     var screen by remember { mutableStateOf<Screen>(Screen.Tabs) }
     var viewer by remember { mutableStateOf<Pair<List<Img>, Int>?>(null) }
+    var fromSuggest by remember { mutableStateOf<Person?>(null) }       // đang xem ảnh từ trang đề xuất của người này (nút người − = không phải người này)
     var fromPerson by remember { mutableStateOf<Person?>(null) }        // đang xem ảnh trong nhóm của người này (để có nút loại khỏi danh sách)
     var locateUid by remember { mutableStateOf<String?>(null) }         // ảnh cần cuộn tới trong All
     val scope = rememberCoroutineScope()
@@ -352,7 +353,7 @@ fun Main() {
     var undo by remember { mutableStateOf<UndoItem?>(null) }
     var note by remember { mutableStateOf("") }
     val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()   // mỗi tab nhớ vị trí cuộn riêng: đổi tab rồi quay lại vẫn đúng chỗ cũ
-    val open: (List<Img>, Int) -> Unit = { l, i -> viewer = l to i; fromPerson = (screen as? Screen.PersonView)?.p }
+    val open: (List<Img>, Int) -> Unit = { l, i -> viewer = l to i; fromPerson = (screen as? Screen.PersonView)?.p; fromSuggest = (screen as? Screen.Suggest)?.p }
     EdgeBack(viewer != null || screen !is Screen.Tabs) {
         val sc = screen
         if (viewer != null) viewer = null else if (sc is Screen.Suggest) screen = Screen.PersonView(sc.p) else screen = Screen.Tabs
@@ -482,7 +483,7 @@ fun Main() {
             }
         }
         viewer?.let { (list, i) ->
-            ViewerScreen(list, i, fromPerson,
+            ViewerScreen(list, i, fromPerson, fromSuggest,
                 onPerson = { p -> viewer = null; screen = Screen.PersonView(p) },                       // bấm tên người: mở trang ảnh của người đó
                 onLocate = { im -> viewer = null; screen = Screen.Tabs; area = "all"; locateUid = im.uid }) { viewer = null }
         }
@@ -1873,8 +1874,9 @@ fun SearchScreen(open: (List<Img>, Int) -> Unit) {
 }
 
 @Composable
-fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, onPerson: (Person) -> Unit, onLocate: (Img) -> Unit, close: () -> Unit) {
+fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest: Person?, onPerson: (Person) -> Unit, onLocate: (Img) -> Unit, close: () -> Unit) {
     var removed by remember { mutableStateOf(setOf<String>()) }       // ảnh vừa loại khỏi danh sách: biến mất khỏi dải xem
+    var removedSuggest by remember { mutableStateOf(false) }          // lần loại gần nhất là loại khỏi đề xuất (hoàn tác bằng guessRestore)
     var lastRemoved by remember { mutableStateOf<Pair<Person, String>?>(null) }     // để có nút Hoàn tác
     val list = remember(listIn, removed) { listIn.filter { it.uid !in removed } }
     val pager = rememberPagerState(initialPage = start.coerceIn(0, (listIn.size - 1).coerceAtLeast(0))) { list.size }
@@ -1955,7 +1957,13 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, onPerson: (
                 right = {
                     if (fromPerson != null) RoundBtn(onClick = {
                         scope.launch {
-                            try { Store.personRemove(fromPerson, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromPerson to cur.uid; note = "Đã loại khỏi nhóm ${fromPerson.name.ifEmpty { "này" }}; máy tính sẽ kiểm tra và xếp lại" }
+                            try { Store.personRemove(fromPerson, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromPerson to cur.uid; removedSuggest = false; note = "Đã loại khỏi nhóm ${fromPerson.name.ifEmpty { "này" }}; máy tính sẽ kiểm tra và xếp lại" }
+                            catch (e: Exception) { note = "Không loại được: ${e.message}" }
+                        }
+                    }) { BtnIcon("remove") }
+                    else if (fromSuggest != null) RoundBtn(onClick = {                       // xem từ trang đề xuất: người − = không phải người này, ảnh hết là đề xuất
+                        scope.launch {
+                            try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; note = "Đã loại khỏi đề xuất của ${fromSuggest.name.ifEmpty { "người này" }}" }
                             catch (e: Exception) { note = "Không loại được: ${e.message}" }
                         }
                     }) { BtnIcon("remove") }
@@ -1981,7 +1989,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, onPerson: (
                 if (note.isNotEmpty() || lastRemoved != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     if (note.isNotEmpty()) Text(note, Modifier.weight(1f, fill = false), color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
                     lastRemoved?.let { (pp, uid) ->
-                        TextButton({ scope.launch { try { Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                        TextButton({ scope.launch { try { if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
