@@ -959,8 +959,9 @@ fun Tile(im: Img, on: Boolean, anySel: Boolean, onToggle: () -> Unit, onOpen: ()
         Thumb(im.uid, Modifier.fillMaxSize().graphicsLayer { scaleX = sc; scaleY = sc }.clip(RoundedCornerShape(corner)))
         val ver = Store.version
         if (LocalShowStars.current && ver >= 0 && Store.isFav(im.uid)) {          // ảnh đã gắn sao Yêu thích: ngôi sao sáng ở góc trên bên trái (khi đang chọn ảnh thì nằm cạnh ô tick)
-            Text("★", Modifier.align(Alignment.TopStart).padding(start = if (anySel) 32.dp else 6.dp, top = 3.dp), color = Color(0xFFFFD05A), fontSize = 17.sp,
-                style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), Offset.Zero, 8f)))
+            Box(Modifier.align(Alignment.TopStart).padding(start = if (anySel) 34.dp else 5.dp, top = 5.dp).size(18.dp).clip(CircleShape).background(Color(0x66000000)), contentAlignment = Alignment.Center) {        // ngôi sao trong hình tròn nhỏ, cùng kiểu với trái tim trên thẻ người ở Model
+                Text("★", color = Color(0xFFFFD05A), fontSize = 11.sp, lineHeight = 11.sp)
+            }
         }
         if (anySel) {
             val dx = maxWidth * (1f - sc) / 2 + 4.dp                           // góc trên trái của ảnh sau khi thu nhỏ
