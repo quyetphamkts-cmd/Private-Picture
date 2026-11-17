@@ -489,22 +489,38 @@ object Store {
 
     private suspend fun syncPending() {
         val inbox = inboxId
-        var list = loadPending()
-        for (p in list) if (!p.sent && upload(p)) p.sent = true
+        val snapshot = synchronized(pendLock) { loadPending() }
+        for (p in snapshot) if (!p.sent && upload(p)) markSent(p.name)
         val present = if (inbox != null) try { Drive.list(inbox).map { it.name }.toSet() } catch (e: Exception) { null } else null
-        if (present != null) list = list.filter { !it.sent || it.name in present }.toMutableList()
-        savePending(list)
+        val list = synchronized(pendLock) {
+            var l = loadPending()
+            // thao tác PC đã nhận (đã biến khỏi inbox) vẫn được giữ thêm 15 phút và áp dụng lên dữ liệu vừa tải: tránh nhìn thấy ảnh đã xác nhận "quay lại chưa xác nhận" khi tải về danh mục cũ hơn lúc PC xử lý xong
+            if (present != null) l = l.filter { !it.sent || it.name in present || System.currentTimeMillis() - createdAt(it.name) < 15 * 60 * 1000 }.toMutableList()
+            savePending(l)
+            l
+        }
         for (p in list) applyOps(JSONArray(p.ops))
         version++
     }
 
-    private suspend fun post(ops: JSONArray) = withContext(Dispatchers.IO) {
+    private val pendLock = Any()                                   // mọi thao tác đọc / ghi hàng đợi chờ gửi đều qua khóa này (nhiều thao tác nhanh liên tiếp không ghi đè nhau)
+
+    private fun enqueue(ops: JSONArray): Pending = synchronized(pendLock) {
         val p = Pending("android-${System.currentTimeMillis()}-${(1000..9999).random()}.pe", ops.toString(), false)
         val list = loadPending()
         list.add(p)
         savePending(list)
-        if (upload(p)) { p.sent = true; savePending(list) }
+        p
     }
+
+    private fun markSent(name: String) = synchronized(pendLock) {
+        val list = loadPending()
+        list.firstOrNull { it.name == name }?.sent = true
+        savePending(list)
+    }
+
+    /** Tên tệp 'android-<mili giây>-<số>.pe': thời điểm tạo, dùng để giữ lại thao tác vừa được PC nhận trong một lúc. */
+    private fun createdAt(name: String): Long = name.split("-").getOrNull(1)?.toLongOrNull() ?: 0L
 
     private var labelSeq = -1
 
@@ -597,7 +613,8 @@ object Store {
     private suspend fun commit(ops: JSONArray) {
         applyOps(ops)                                              // áp dụng trên điện thoại NGAY: giao diện đổi tức thì
         version++
-        bgScope.launch { try { post(ops) } catch (e: Exception) { } }          // gửi lên Drive ở nền, không bắt người dùng chờ mạng
+        val p = enqueue(ops)                                       // ghi vào hàng đợi trên điện thoại NGAY (không mất nếu tắt app hoặc mất mạng ngay sau đó)
+        bgScope.launch { try { if (upload(p)) markSent(p.name) } catch (e: Exception) { } }          // gửi lên Drive ở nền, không bắt người dùng chờ mạng
     }
 
     private fun op(kind: String) = JSONObject().put("op", kind).put("ts", System.currentTimeMillis() / 1000.0)
