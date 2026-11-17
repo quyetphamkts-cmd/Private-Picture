@@ -1876,6 +1876,11 @@ fun SearchScreen(open: (List<Img>, Int) -> Unit) {
 @Composable
 fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest: Person?, onPerson: (Person) -> Unit, onLocate: (Img) -> Unit, close: () -> Unit) {
     var removed by remember { mutableStateOf(setOf<String>()) }       // ảnh vừa loại khỏi danh sách: biến mất khỏi dải xem
+    // danh sách đang xem là một nhóm đồng loại (ví dụ cả danh sách là Dressed): phân loại ảnh sang loại khác thì ảnh rời nhóm, biến khỏi dải xem và chuyển sang ảnh kế tiếp
+    val listClasses = remember(listIn) { listIn.map { Store.clothing[it.uid] }.distinct() }
+    val homogeneous = listClasses.size == 1
+    val listClass = listClasses.firstOrNull()
+    var clothUndo by remember { mutableStateOf<Pair<String, String?>?>(null) }                  // (mã ảnh, loại trước đó) để hoàn tác lần phân loại gần nhất
     var acceptedSuggest by remember { mutableStateOf(false) }        // lần xử lý gần nhất là xác nhận đúng người (hoàn tác: bỏ khỏi người đó và đưa về đề xuất)
     var removedSuggest by remember { mutableStateOf(false) }          // lần loại gần nhất là loại khỏi đề xuất (hoàn tác bằng guessRestore)
     var lastRemoved by remember { mutableStateOf<Pair<Person, String>?>(null) }     // để có nút Hoàn tác
@@ -1974,7 +1979,12 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                     ClothPill(curCloth, false, showThird = false) { c ->
                         scope.launch {
                             try {
-                                if (c != null) { Store.setCloth(listOf(cur.uid), c); note = "Đã chuyển sang ${CLOTHES.first { it.first == c }.second}" }
+                                if (c != null) {
+                                    val prev = Store.clothing[cur.uid]
+                                    Store.setCloth(listOf(cur.uid), c)
+                                    note = "Đã chuyển sang ${CLOTHES.first { it.first == c }.second}"
+                                    if (homogeneous && c != listClass && c != prev) { removed = removed + cur.uid; clothUndo = cur.uid to prev }        // rời nhóm: biến khỏi dải xem, sang ảnh kế tiếp
+                                }
                             } catch (e: Exception) { note = "Không phân loại được: ${e.message}" }
                         }
                     }
@@ -2011,8 +2021,11 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                         style = androidx.compose.ui.text.TextStyle(shadow = if (isFav) androidx.compose.ui.graphics.Shadow(Color(0xCCFFD05A), Offset.Zero, 18f) else null))
                 }
                 if (labs.isNotEmpty()) Text("Nhãn: " + labs.joinToString(", "), color = Color.White, style = MaterialTheme.typography.bodySmall)
-                if (note.isNotEmpty() || lastRemoved != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                if (note.isNotEmpty() || lastRemoved != null || clothUndo != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     if (note.isNotEmpty()) Text(note, Modifier.weight(1f, fill = false), color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
+                    clothUndo?.let { (uid, prev) ->
+                        TextButton({ scope.launch { try { if (prev == null) Store.clearCloth(listOf(uid)) else Store.setCloth(listOf(uid), prev); removed = removed - uid; clothUndo = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                    }
                     lastRemoved?.let { (pp, uid) ->
                         TextButton({ scope.launch { try { if (acceptedSuggest) { Store.personRemove(pp, listOf(uid)); Store.guessRestore(pp, listOf(uid)) } else if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
                     }
