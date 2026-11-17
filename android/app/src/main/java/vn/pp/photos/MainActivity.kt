@@ -1807,6 +1807,7 @@ fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Uni
     val score = items.associate { it.first.uid to it.second }
     val sel = Store.selected
     val state = rememberLazyGridState()
+    var viewDlg by remember { mutableStateOf(false) }
     LaunchedEffect(list.map { it.uid }) { Store.pool = list }
     val uidIndex = remember(list.map { it.uid }) { HashMap<String, Int>().also { m -> list.forEachIndexed { i, im -> m[im.uid] = i + 1 } } }        // +1: ô tiêu đề nằm đầu lưới
     Box(Modifier.fillMaxSize()) {
@@ -1836,9 +1837,12 @@ fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Uni
                 if (selecting) ClothPill(null, true, thirdKind = "tick", onThird = onAccept) { c -> if (c != null) onClassify(c, CLOTHES.first { it.first == c }.second) }
             },
             right = {
-                if (selecting) RoundBtn(onClick = onReject) { BtnIcon("remove") }
-                RoundBtn(onClick = onLocate) { BtnIcon("enter") }
+                if (selecting) {
+                    RoundBtn(onClick = onReject) { BtnIcon("remove") }
+                    RoundBtn(onClick = onLocate) { BtnIcon("enter") }                 // đã chọn ảnh: Enter tới vị trí ảnh
+                } else RoundBtn(onClick = { viewDlg = true }) { BtnIcon("dots") }      // chưa chọn ảnh: nút ⋯ (chế độ xem ảnh) như trang người
             })
+        if (viewDlg) ViewSettingsDialog { viewDlg = false }
     }
     if (v < 0) Text("")
 }
