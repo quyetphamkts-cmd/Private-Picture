@@ -2012,8 +2012,11 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                         if (ppl.isNotEmpty()) Text("Name: ", color = Color.White, softWrap = false)
-                        for (pp in ppl) Text(pp.name.ifEmpty { "Chưa đặt tên" } + "  ", Modifier.clickable { onPerson(pp) }.padding(vertical = 4.dp), color = Color(0xFFE5C07B), softWrap = false,
-                            style = MaterialTheme.typography.bodyMedium.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
+                        ppl.forEachIndexed { k, pp ->
+                            if (k > 0) Text(" ", color = Color.White, softWrap = false, style = MaterialTheme.typography.bodyMedium)          // giữa các tên chỉ một khoảng trắng bằng một ký tự cách, không gạch chân
+                            Text(pp.name.ifEmpty { "Chưa đặt tên" }, Modifier.clickable { onPerson(pp) }.padding(vertical = 4.dp), color = Color(0xFFE5C07B), softWrap = false,        // gạch chân đúng chữ của tên, không dính dấu cách
+                                style = MaterialTheme.typography.bodyMedium.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
+                        }
                     }
                     // ngôi sao Yêu thích: chỉ hình ngôi sao, không khung; được chọn thì vàng và sáng lên
                     Text(if (isFav) "★" else "☆", Modifier.clickable { scope.launch { try { Store.toggleFav(cur.uid) } catch (e: Exception) { } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
