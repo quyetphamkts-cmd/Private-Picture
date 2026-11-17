@@ -426,7 +426,7 @@ fun Main() {
                         when (area) {
                             "all" -> AllPhotos(open, locateUid, false, { c, n -> doClassify(c, n) }) { dlg = "add" }
                             "combo" -> ComboScreen(open)
-                            "fav" -> AllPhotos(open, null, true, { c, n -> doClassify(c, n) }) { dlg = "add" }
+                            "fav" -> androidx.compose.runtime.CompositionLocalProvider(LocalShowStars provides false) { AllPhotos(open, null, true, { c, n -> doClassify(c, n) }) { dlg = "add" } }          // tab Favorite: không cần hiện sao trên từng ảnh
                             "settings" -> SettingsScreen()
                             else -> ModelScreen { screen = Screen.PersonView(it) }
                         }
@@ -945,6 +945,9 @@ fun LabelActions(uids: List<String>, done: () -> Unit, select: (Set<String>) -> 
     }
 }
 
+/** Có hiện ngôi sao Yêu thích ở góc ảnh không (tắt ở tab Favorite vì ở đó mọi ảnh đều đã là ảnh yêu thích). */
+val LocalShowStars = androidx.compose.runtime.compositionLocalOf { true }
+
 /** Một ô ảnh: chạm để xem (hoặc chọn khi đang chọn), bấm giữ hoặc chạm vòng tròn góc trên trái để chọn. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -954,6 +957,11 @@ fun Tile(im: Img, on: Boolean, anySel: Boolean, onToggle: () -> Unit, onOpen: ()
     val corner by androidx.compose.animation.core.animateDpAsState(if (on) 14.dp else 0.dp, tween(140), label = "corner")
     BoxWithConstraints((if (fixedH > 0f) Modifier.height(fixedH.dp) else Modifier.aspectRatio(aspect)).background(if (on) Color(0x1F888888) else Color.Transparent).clickable { if (anySel) onToggle() else onOpen() }) {
         Thumb(im.uid, Modifier.fillMaxSize().graphicsLayer { scaleX = sc; scaleY = sc }.clip(RoundedCornerShape(corner)))
+        val ver = Store.version
+        if (LocalShowStars.current && ver >= 0 && Store.isFav(im.uid)) {          // ảnh đã gắn sao Yêu thích: ngôi sao sáng ở góc trên bên trái (khi đang chọn ảnh thì nằm cạnh ô tick)
+            Text("★", Modifier.align(Alignment.TopStart).padding(start = if (anySel) 32.dp else 6.dp, top = 3.dp), color = Color(0xFFFFD05A), fontSize = 17.sp,
+                style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), Offset.Zero, 8f)))
+        }
         if (anySel) {
             val dx = maxWidth * (1f - sc) / 2 + 4.dp                           // góc trên trái của ảnh sau khi thu nhỏ
             val dy = maxHeight * (1f - sc) / 2 + 4.dp
