@@ -1983,7 +1983,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                                     val prev = Store.clothing[cur.uid]
                                     Store.setCloth(listOf(cur.uid), c)
                                     note = "Đã chuyển sang ${CLOTHES.first { it.first == c }.second}"
-                                    if (homogeneous && c != listClass && c != prev) { removed = removed + cur.uid; clothUndo = cur.uid to prev }        // rời nhóm: biến khỏi dải xem, sang ảnh kế tiếp
+                                    if (c != prev) { removed = removed + cur.uid; clothUndo = cur.uid to prev }        // đổi loại: ảnh sang đúng nhóm mới, biến khỏi dải đang xem ngay và chuyển sang ảnh kế tiếp (Hoàn tác để khôi phục)
                                 }
                             } catch (e: Exception) { note = "Không phân loại được: ${e.message}" }
                         }
