@@ -1954,14 +1954,14 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                         Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
                             RoundBtn(active = true, onClick = {
                                 scope.launch {
-                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng là ${fromSuggest.name.ifEmpty { "người này" }}" }
+                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
                                     catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
                                 }
                             }) { BtnIcon("tick") }
                             RoundBtn(onClick = { pickDlg = true }) { BtnIcon("add") }
                             RoundBtn(onClick = {
                                 scope.launch {
-                                    try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; acceptedSuggest = false; note = "Đã loại khỏi đề xuất của ${fromSuggest.name.ifEmpty { "người này" }}" }
+                                    try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; acceptedSuggest = false; note = "Đã loại khỏi đề xuất" }
                                     catch (e: Exception) { note = "Không loại được: ${e.message}" }
                                 }
                             }) { BtnIcon("remove") }
@@ -1992,13 +1992,13 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 right = {
                     if (fromPerson != null) RoundBtn(onClick = {
                         scope.launch {
-                            try { Store.personRemove(fromPerson, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromPerson to cur.uid; removedSuggest = false; note = "Đã loại khỏi nhóm ${fromPerson.name.ifEmpty { "này" }}; máy tính sẽ kiểm tra và xếp lại" }
+                            try { Store.personRemove(fromPerson, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromPerson to cur.uid; removedSuggest = false; note = "Đã loại khỏi nhóm" }
                             catch (e: Exception) { note = "Không loại được: ${e.message}" }
                         }
                     }) { BtnIcon("remove") }
                     else if (fromSuggest != null) RoundBtn(onClick = {                       // xem từ trang đề xuất: người − = không phải người này, ảnh hết là đề xuất
                         scope.launch {
-                            try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; note = "Đã loại khỏi đề xuất của ${fromSuggest.name.ifEmpty { "người này" }}" }
+                            try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; note = "Đã loại khỏi đề xuất" }
                             catch (e: Exception) { note = "Không loại được: ${e.message}" }
                         }
                     }) { BtnIcon("remove") }
@@ -2025,12 +2025,12 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 }
                 if (labs.isNotEmpty()) Text("Nhãn: " + labs.joinToString(", "), color = Color.White, style = MaterialTheme.typography.bodySmall)
                 if (note.isNotEmpty() || lastRemoved != null || clothUndo != null) Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (note.isNotEmpty()) Text(note, Modifier.weight(1f, fill = false), color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
+                    if (note.isNotEmpty()) Text(note, maxLines = 1, color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
                     clothUndo?.let { (uid, prev) ->
-                        TextButton({ scope.launch { try { if (prev == null) Store.clearCloth(listOf(uid)) else Store.setCloth(listOf(uid), prev); removed = removed - uid; clothUndo = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                        Text("Hoàn tác", Modifier.clickable { scope.launch { try { if (prev == null) Store.clearCloth(listOf(uid)) else Store.setCloth(listOf(uid), prev); removed = removed - uid; clothUndo = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp), color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
                     }
                     lastRemoved?.let { (pp, uid) ->
-                        TextButton({ scope.launch { try { if (acceptedSuggest) { Store.personRemove(pp, listOf(uid)); Store.guessRestore(pp, listOf(uid)) } else if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                        Text("Hoàn tác", Modifier.clickable { scope.launch { try { if (acceptedSuggest) { Store.personRemove(pp, listOf(uid)); Store.guessRestore(pp, listOf(uid)) } else if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp), color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
