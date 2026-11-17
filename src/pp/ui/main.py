@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
                     self.pages["settings"].auto_scan()
             self.pages["account"].updateIdle.connect(start_scan)
             for ms, fn in ((800, self.pages["account"].auto_check), (180000, start_scan),
-                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup)):
+                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg)):
                 t = QTimer(self)
                 t.setSingleShot(True)
                 t.timeout.connect(fn)
@@ -218,6 +218,17 @@ class MainWindow(QMainWindow):
         self._bw = BackupWorker(db, db.get_meta("backup_dir"), db.get_meta("backup_vault", "1") == "1", int(db.get_meta("backup_keep", "5")))
         self._bw.done.connect(lambda path, err: (db.set_meta("backup_last", time.time()), db.set_meta("backup_sig", sig)) if path else None)
         self._bw.start()
+
+    def auto_refimg(self):
+        """Ảnh tham chiếu từ internet cho người đã đặt tên (chỉ gửi tên): chạy nền khi máy rảnh, kiểm tra lại mỗi 6 giờ."""
+        db = self.ctx.db
+        QTimer.singleShot(6 * 3600 * 1000, self.auto_refimg)
+        if db.get_meta("refimg_auto", "1") != "1" or self.busy() or (getattr(self, "_rw", None) and self._rw.isRunning()):
+            return
+        from .pages import RefWorker
+        self._rw = RefWorker(db)
+        self._rw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self._rw.start(QThread.LowPriority)
 
     def ensure_sync_setup(self):
         """Đồng bộ điện thoại tự động chạy sau khi đã cấu hình; chưa cấu hình (lần đầu) thì tự mở hộp cài đặt một lần để chọn thư mục Drive và mật khẩu đồng bộ."""

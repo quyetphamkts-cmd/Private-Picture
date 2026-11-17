@@ -509,6 +509,52 @@ def photo_combos(db, min_photos=2, min_person_imgs=2):
     return sorted(out, key=lambda c: (-c["n"], c["names"]))
 
 
+def apply_refs(db, warn_thr=0.30, name_thr=0.50, boost=0.10, min_faces=5):
+    """Dùng ảnh tham chiếu (vectơ lấy từ internet, bảng person_ref) để: (1) cảnh báo nhóm mang tên X mà khuôn mặt (trung vị) khác xa ảnh tham chiếu của X,
+    (2) gợi ý tên cho nhóm chưa có tên giống ảnh tham chiếu của một người đã biết, (3) tăng độ chắc cho đề xuất có khuôn mặt khớp ảnh tham chiếu.
+    Không tự sửa gì: chỉ ghi cảnh báo (ref_flag), ứng viên (person_candidates) và điểm đề xuất. Trả về (số cảnh báo, số gợi ý tên)."""
+    dim = face_dim(db)
+    cen = {}
+    for r in db.q("SELECT person_id,vec FROM person_ref WHERE dim=?", (dim,)):
+        cen.setdefault(r["person_id"], []).append(blob_to_vec(r["vec"]))
+    cen = {p: _unit(np.mean(_unit(np.stack(v).astype(np.float32)), axis=0)) for p, v in cen.items() if len(v) >= 3}
+    if not cen:
+        return 0, 0
+    names = {r["id"]: r["name"] for r in db.q("SELECT id,name FROM persons WHERE hidden=0")}
+    db.c.execute("DELETE FROM ref_flag")
+    flags = 0
+    suggested = 0
+    for pid, c in cen.items():                                                   # (1) cảnh báo gán nhầm tên
+        if not names.get(pid):
+            continue
+        vs = [blob_to_vec(r["vec"]) for r in db.q("SELECT vec FROM faces WHERE person_id=? AND vec IS NOT NULL", (pid,)) if len(r["vec"]) == dim * 4]
+        if len(vs) >= min_faces:
+            sims = _unit(np.stack(vs).astype(np.float32)) @ c
+            med = float(np.median(sims))
+            if med < warn_thr:
+                db.c.execute("INSERT OR REPLACE INTO ref_flag(person_id,sim,n) VALUES(?,?,?)", (pid, med, len(vs)))
+                flags += 1
+    for p in db.q("SELECT id FROM persons WHERE name IS NULL AND hidden=0"):       # (2) gợi ý tên cho nhóm chưa có tên
+        vs = [blob_to_vec(r["vec"]) for r in db.q("SELECT vec FROM faces WHERE person_id=? AND vec IS NOT NULL", (p["id"],)) if len(r["vec"]) == dim * 4]
+        if len(vs) < 2:
+            continue
+        mc = _unit(np.mean(_unit(np.stack(vs).astype(np.float32)), axis=0))
+        ranked = sorted(((float(mc @ c), q) for q, c in cen.items() if names.get(q)), reverse=True)[:2]
+        if ranked and ranked[0][0] >= name_thr and (len(ranked) == 1 or ranked[0][0] - ranked[1][0] >= 0.05):
+            for sc, q in ranked[:1]:
+                db.c.execute("INSERT OR REPLACE INTO person_candidates(person_id,name,score) VALUES(?,?,?)", (p["id"], names[q], sc))
+                suggested += 1
+    for g in db.q("SELECT image_id,person_id,score FROM person_guess WHERE state=0"):  # (3) tăng độ chắc cho đề xuất
+        c = cen.get(g["person_id"])
+        if c is None:
+            continue
+        vs = [blob_to_vec(r["vec"]) for r in db.q("SELECT vec FROM faces WHERE image_id=? AND vec IS NOT NULL", (g["image_id"],)) if len(r["vec"]) == dim * 4]
+        if vs and float(np.max(_unit(np.stack(vs).astype(np.float32)) @ c)) >= name_thr:
+            db.c.execute("UPDATE person_guess SET score=? WHERE image_id=? AND person_id=? AND state=0", (min(1.0, (g["score"] or 0) + boost), g["image_id"], g["person_id"]))
+    db.commit()
+    return flags, suggested
+
+
 def infer_candidates(db, top=3, min_imgs=2):
     """Với người chưa có tên mà app CHƯA đủ chắc để đề xuất (không có trong person_suggest): liệt kê tối đa `top` tên có khả năng nhất để người dùng xem ảnh rồi chọn.
     Căn cứ: các tên ghi trên tệp nén chứa ảnh của người đó (trừ tên đã có người riêng trong tệp); mỗi tệp chia đều điểm cho các tên còn lại, cộng dồn theo số ảnh.

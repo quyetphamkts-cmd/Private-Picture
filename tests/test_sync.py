@@ -372,3 +372,19 @@ def test_guesses_published_and_phone_can_accept_or_reject(lib, tmp_path):
     sync.run(db, dest, "pw", include_originals=False)
     assert db.one("SELECT state FROM person_guess WHERE image_id=? AND person_id=?", (rows[0]["id"], pid))["state"] == 2
     assert db.one("SELECT state FROM person_guess WHERE image_id=? AND person_id=?", (rows[1]["id"], pid))["state"] == 1
+
+
+def test_commons_reference_urls_require_exact_human_name():
+    from pp import refimg
+    calls = []
+    def fake(url, timeout=15, binary=False, opener=None):
+        calls.append(url)
+        if "wbsearchentities" in url:
+            return {"search": [{"id": "Q1", "label": "Jane Roe"}, {"id": "Q2", "label": "Jane Doe"}]}
+        if "wbgetentities" in url and "Q2" in url:
+            return {"entities": {"Q2": {"claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": "Q5"}}}}],
+                                                   "P18": [{"mainsnak": {"datavalue": {"value": "Jane Doe.jpg"}}}]}}}}
+        return {"entities": {}}
+    urls = refimg.commons_urls("Jane Doe", get=fake)
+    assert len(urls) == 1 and urls[0].endswith("?width=700") and "Jane_Doe.jpg" in urls[0]
+    assert refimg.commons_urls("Nobody Here", get=fake) == []                                          # tên không khớp đúng: không đoán

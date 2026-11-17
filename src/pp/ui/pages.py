@@ -1698,11 +1698,13 @@ class PeoplePage(Page):
         self.az_b.setText(f"A – Z  ▾" if not self.letter else f"Chữ {self.letter}  ✕")
         filt = bool(q or self.letter or sel)
         self.cnt.setText(f"{len(ps)} nhóm" + (f" (ẩn {total - len(ps)} nhóm chỉ có 1 ảnh)" if (not filt and len(ps) != total) else ""))
+        refwarn = {r["person_id"] for r in self.ctx.db.q("SELECT person_id FROM ref_flag")}
         def items(rows):
             out = []
             for p in rows:
-                it = {"thumb": p["cover"], "pid": p["id"], "key": f"p{p['id']}{p['cover']}{p['favorite']}", "label": f"{p['name'] or 'Chưa đặt tên'}\n{p['n']} ảnh",
-                      "tip": f"{p['name'] or 'Chưa đặt tên'} · {p['n']} ảnh · đã xác minh {round(100 * p['ver'] / max(1, p['n'] + p['pend']))}%",
+                warn = p["id"] in refwarn
+                it = {"thumb": p["cover"], "pid": p["id"], "key": f"p{p['id']}{p['cover']}{p['favorite']}{warn}", "label": f"{'⚠ ' if warn else ''}{p['name'] or 'Chưa đặt tên'}\n{p['n']} ảnh",
+                      "tip": f"{p['name'] or 'Chưa đặt tên'} · {p['n']} ảnh · đã xác minh {round(100 * p['ver'] / max(1, p['n'] + p['pend']))}%" + ("\n⚠ Khuôn mặt trong nhóm khác xa ảnh tham chiếu trên internet của người này: nên kiểm tra lại tên" if warn else ""),
                       "fav": bool(p["favorite"]), "unver": max(0.0, 1.0 - p["ver"] / max(1, p["n"] + p["pend"]))}       # ảnh app đề xuất mà chưa xác minh cũng tính là chưa hoàn thành
                 pick = self.ctx.db.cover_pick(p["id"], self._kind) if self._kind != "face" else None
                 if pick:                                                              # thẻ lớn: toàn thân (5–10/hàng), bán thân (15/hàng)
@@ -2993,6 +2995,102 @@ class SyncWorker(QThread):
             self.done.emit(None, str(e) or type(e).__name__)
 
 
+class RefWorker(QThread):
+    """Chạy nền: tải ảnh tham chiếu (chỉ gửi TÊN người) cho những người đã đặt tên, tạo vectơ rồi áp dụng vào cảnh báo / gợi ý tên."""
+    done = Signal(int)
+
+    def __init__(self, db):
+        super().__init__()
+        self.db = db
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        n = 0
+        try:
+            from .. import models, refimg
+            if models.ready():
+                eng = models.FaceEngine(threads=1)
+                try:
+                    n = refimg.run(self.db, eng, stop=lambda: self._stop)
+                finally:
+                    eng.close()
+        except Exception:
+            pass
+        self.done.emit(n)
+
+
+class RefDialog(QDialog):
+    """Ảnh tham chiếu từ internet: bật / tắt, khóa tìm kiếm web (tùy chọn) và chạy ngay."""
+
+    def __init__(self, ctx, parent=None):
+        super().__init__(parent)
+        self.ctx = ctx
+        db = ctx.db
+        self.setWindowTitle("Ảnh tham chiếu từ internet")
+        self.resize(560, 360)
+        l = QVBoxLayout(self)
+        l.addWidget(QLabel("<h2 style='margin:0'>Ảnh tham chiếu từ internet</h2>"))
+        t = QLabel("Với những người đã có tên (đa phần là người nổi tiếng), app tự tìm vài ảnh chân dung công khai trên <b>Wikimedia Commons</b>, tạo vectơ khuôn mặt "
+                   "rồi bỏ ảnh. Sau đó dùng để cảnh báo nhóm có thể gán nhầm tên, gợi ý tên cho nhóm chưa có tên và tăng độ chắc cho đề xuất.<br><br>"
+                   "<b>Chỉ TÊN người được gửi ra ngoài</b>, không bao giờ gửi ảnh nào của bạn. App không tự sửa gì, chỉ cảnh báo và gợi ý. "
+                   "Ảnh nào có nhiều người hoặc các ảnh không khớp nhau thì bị bỏ để tránh lấy nhầm người khác.")
+        t.setWordWrap(True)
+        l.addWidget(t)
+        self.auto = QCheckBox("Tự động tìm ảnh tham chiếu cho người mới đặt tên")
+        self.auto.setChecked(db.get_meta("refimg_auto", "1") == "1")
+        l.addWidget(self.auto)
+        l.addWidget(QLabel("Tìm thêm trên web bằng Google Programmable Search (tùy chọn, người nào không có trên Wikimedia Commons):"))
+        self.key = QLineEdit(db.get_meta("refimg_key", ""))
+        self.key.setPlaceholderText("Khóa API (API key)")
+        self.key.setEchoMode(QLineEdit.Password)
+        self.cx = QLineEdit(db.get_meta("refimg_cx", ""))
+        self.cx.setPlaceholderText("Mã công cụ tìm kiếm (cx)")
+        l.addWidget(self.key)
+        l.addWidget(self.cx)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        l.addWidget(self.status)
+        row = QHBoxLayout()
+        self.run_b = QPushButton("Tìm ngay")
+        self.run_b.clicked.connect(self.run_now)
+        close = QPushButton("Lưu và đóng")
+        close.clicked.connect(self.save_close)
+        row.addWidget(self.run_b)
+        row.addStretch(1)
+        row.addWidget(close)
+        l.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        db = self.ctx.db
+        have = db.one("SELECT COUNT(DISTINCT person_id) c FROM person_ref")["c"]
+        tried = db.one("SELECT COUNT(*) c FROM ref_state")["c"]
+        named = db.one("SELECT COUNT(*) c FROM persons WHERE name IS NOT NULL AND hidden=0")["c"]
+        flags = db.one("SELECT COUNT(*) c FROM ref_flag")["c"]
+        self.status.setText(f"Đã có ảnh tham chiếu cho {have} người (đã thử {tried} / {named} người có tên). Đang cảnh báo nghi nhầm tên: {flags} nhóm.")
+
+    def save(self):
+        db = self.ctx.db
+        db.set_meta("refimg_auto", "1" if self.auto.isChecked() else "0")
+        db.set_meta("refimg_key", self.key.text().strip())
+        db.set_meta("refimg_cx", self.cx.text().strip())
+
+    def run_now(self):
+        self.save()
+        self.w = RefWorker(self.ctx.db)
+        self.w.done.connect(lambda n: (self.run_b.setEnabled(True), self.refresh(), self.ctx.changed.emit()))
+        self.run_b.setEnabled(False)
+        self.status.setText("Đang tìm ảnh tham chiếu…")
+        self.w.start()
+
+    def save_close(self):
+        self.save()
+        self.accept()
+
+
 class ArchiveCleanWorker(QThread):
     """Dọn các tệp nén đã đồng bộ lên Drive: xóa ảnh bên trong (đã kiểm chứng giống hệt bản mã hóa), giữ tệp nén rỗng cùng tên."""
     done = Signal(int, int)           # số ảnh đã dọn, số tệp nén
@@ -3568,6 +3666,7 @@ class ScanWorker(QThread):
                     cluster.assign_by_sequence(self.db)
                     cluster.infer_names(self.db, auto=True)
                     cluster.infer_candidates(self.db)
+                    cluster.apply_refs(self.db)                       # ảnh tham chiếu từ internet: cảnh báo nhầm tên, gợi ý tên, tăng độ chắc
                     cluster.assign_by_session(self.db)                 # chia buổi chụp theo giờ, gợi ý người cho ảnh chưa rõ trong buổi
                     cluster.claim_single_name_archives(self.db)
                 except Exception:
@@ -3729,6 +3828,10 @@ class AccountPage(Page):
         upd = QHBoxLayout()
         b = QPushButton("Mã truy cập cập nhật…")
         b.clicked.connect(self.set_token)
+        upd.addWidget(b)
+        b = QPushButton("Ảnh tham chiếu…")
+        b.setToolTip("Ảnh chân dung công khai trên internet của những người đã có tên, dùng để cảnh báo nhầm tên và gợi ý tên (chỉ gửi tên, không gửi ảnh)")
+        b.clicked.connect(lambda: RefDialog(self.ctx, self).exec())
         upd.addWidget(b)
         b = QPushButton("Kiểm tra cập nhật")
         b.clicked.connect(lambda: self.check_updates(False))

@@ -1136,3 +1136,34 @@ def test_single_person_photo_keeps_one_name_extra_is_fallback(tmp_path):
     cluster.accept_guesses(db, b, [one])                                                           # người dùng xác nhận tên B: mặt sang B, A thành dự phòng
     assert db.one("SELECT person_id FROM faces WHERE image_id=?", (one,))["person_id"] == b
     assert db.one("SELECT state FROM person_guess WHERE image_id=? AND person_id=?", (one, a))["state"] == 0
+
+
+def test_reference_images_flag_wrong_name_and_suggest_name(tmp_path):
+    import numpy as np
+    from pp import refimg
+    from pp.db import DB, vec_to_blob
+    rng = np.random.default_rng(3)
+    db = DB(str(tmp_path / "r.db"))
+    def vec(base, noise=0.012):
+        v = base + rng.normal(0, noise, 512).astype(np.float32)
+        return v / np.linalg.norm(v)
+    a_id, b_id = rng.normal(size=512).astype(np.float32), rng.normal(size=512).astype(np.float32)
+    a_id /= np.linalg.norm(a_id); b_id /= np.linalg.norm(b_id)
+    A = db.x("INSERT INTO persons(name) VALUES('Anna Test')").lastrowid
+    B = db.x("INSERT INTO persons(name) VALUES('Bella Test')").lastrowid
+    U = db.x("INSERT INTO persons(name) VALUES(NULL)").lastrowid
+    def face(pid, base):
+        iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/x/{rng.integers(1e9)}.jpg", 1, 1, 9, 9, "t")).lastrowid
+        db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id) VALUES(?,?,?,?,?,?,?,?,?)", (iid, .1, .1, .2, .2, .9, 80, vec_to_blob(vec(base)), pid))
+    for _ in range(6):
+        face(A, a_id)                  # nhóm tên Anna đúng là mặt Anna
+        face(B, a_id)                  # nhóm tên Bella lại là mặt Anna: gán nhầm tên
+        face(U, b_id)                  # nhóm chưa tên giống Bella (theo ảnh tham chiếu)
+    for pid, base in ((A, a_id), (B, b_id)):
+        for _ in range(4):
+            db.x("INSERT INTO person_ref(person_id,dim,vec,src) VALUES(?,?,?,?)", (pid, 512, vec_to_blob(vec(base)), "commons"))
+    flags, sug = cluster.apply_refs(db)
+    assert [r["person_id"] for r in db.q("SELECT person_id FROM ref_flag")] == [B]                 # Bella nghi nhầm tên
+    assert db.one("SELECT name FROM person_candidates WHERE person_id=?", (U,))["name"] == "Bella Test"
+    assert refimg.consistent([vec(a_id), vec(a_id), vec(b_id)]) == []                                 # chỉ 2/3 khớp nhau: chưa đủ đồng thuận
+    assert len(refimg.consistent([vec(a_id) for _ in range(4)] + [vec(b_id)])) == 4                  # bỏ mặt lạc lõng
