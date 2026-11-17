@@ -1117,6 +1117,32 @@ def test_mashup_counts_real_people_by_faces(tmp_path, monkeypatch):
     assert mirror not in sum(out.values(), []) and poster not in sum(out.values(), [])
 
 
+def test_mashup_fuses_bodies_with_faces(tmp_path, monkeypatch):
+    import json
+    db = _db(tmp_path, monkeypatch)
+    rng = np.random.default_rng(3)
+    v = [rng.normal(size=128).astype("float32") for _ in range(3)]
+    def photo(n, faces, bodies):
+        iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/b/{n}.jpg", 1, 1, 100, 100, "t")).lastrowid
+        for vec, x, sc in faces:
+            db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id) VALUES(?,?,?,?,?,?,?,?,NULL)", (iid, x, .1, .1, .1, sc, 80, vec_to_blob(vec)))
+        db.x("INSERT INTO image_body(image_id,n,boxes) VALUES(?,?,?)", (iid, len(bodies), json.dumps(bodies)))
+        return iid
+    B = lambda x: [x, .05, .3, .8, .9]                                          # người cao 80% ảnh
+    back = photo("back", [(v[0], .1, .95)], [B(0.0), B(.5)])                    # 1 mặt + 1 người quay lưng = 2
+    mirror = photo("mirror", [(v[0], .1, .95), (v[0], .6, .95)], [B(0.0)])      # bóng gương: mặt thứ hai trùng, chỉ 1 người
+    solo = photo("solo", [(v[0], .1, .95)], [B(0.0)])
+    far = photo("far", [(v[0], .1, .95), (v[1], .6, .95)], [[0, .05, .05, .1, .9]])   # người quá nhỏ bị bỏ; hai mặt rõ = 2
+    out = {i: n for n, ids in cluster.mashup_by_count(db).items() for i in ids}
+    assert out == {back: 2, far: 2}
+    assert mirror not in out and solo not in out
+
+
+def test_calibrate_mashup_needs_enough_data(tmp_path, monkeypatch):
+    db = _db(tmp_path, monkeypatch)
+    assert cluster.calibrate_mashup(db) is None
+
+
 def test_single_person_photo_keeps_one_name_extra_is_fallback(tmp_path):
     from pp.db import DB
     db = DB(str(tmp_path / "n.db"))

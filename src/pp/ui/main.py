@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
                     self.pages["settings"].auto_scan()
             self.pages["account"].updateIdle.connect(start_scan)
             for ms, fn in ((800, self.pages["account"].auto_check), (180000, start_scan),
-                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg)):
+                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg), (150000, self.auto_bodies)):
                 t = QTimer(self)
                 t.setSingleShot(True)
                 t.timeout.connect(fn)
@@ -229,6 +229,17 @@ class MainWindow(QMainWindow):
         self._rw = RefWorker(db)
         self._rw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
         self._rw.start(QThread.LowPriority)
+
+    def auto_bodies(self):
+        """Phát hiện người trong ảnh (để đếm số người của Mashup chính xác hơn): chạy nền khi máy rảnh, kiểm tra lại mỗi 2 giờ."""
+        db = self.ctx.db
+        QTimer.singleShot(2 * 3600 * 1000, self.auto_bodies)
+        if self.busy() or (getattr(self, "_bdw", None) and self._bdw.isRunning()):
+            return
+        from .pages import BodyWorker
+        self._bdw = BodyWorker(db)
+        self._bdw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self._bdw.start(QThread.LowPriority)
 
     def ensure_sync_setup(self):
         """Đồng bộ điện thoại tự động chạy sau khi đã cấu hình; chưa cấu hình (lần đầu) thì tự mở hộp cài đặt một lần để chọn thư mục Drive và mật khẩu đồng bộ."""

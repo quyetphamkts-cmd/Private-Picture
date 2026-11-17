@@ -1,4 +1,5 @@
 """Gom nhóm: mặt theo người, ảnh tương tự, tìm theo chữ hoặc theo ảnh mẫu."""
+import json
 import numpy as np
 
 from .db import blob_to_vec, vec_to_blob
@@ -458,34 +459,157 @@ def _mashup_people(db, min_person_imgs=2):
     return label, {i: ps for i, ps in per_img.items() if len(ps) >= 2}
 
 
-def mashup_by_count(db, min_score=0.9, same_thr=0.5, small_ratio=0.3):
-    """Mashup chia theo SỐ NGƯỜI trong ảnh: {số người: [mã ảnh]} (từ 2 người trở lên). Đếm theo KHUÔN MẶT thật trong ảnh, không phụ thuộc mặt đã vào nhóm người nào:
-    chỉ tính mặt rõ (điểm nhận diện cao, đủ lớn), bỏ mặt quá nhỏ so với mặt chính (áp phích, phản chiếu phía sau), và hai mặt giống hệt nhau trong cùng ảnh
-    (bóng trong gương, một người bị nhận hai lần) chỉ tính là một người."""
-    ids = [r["image_id"] for r in db.q("""SELECT image_id FROM faces WHERE score>=? AND px>=? AND vec IS NOT NULL AND image_id NOT IN (SELECT image_id FROM dup_hidden)
-                                          GROUP BY image_id HAVING COUNT(*)>=2""", (min_score, MIN_FACE_PX))]
-    out = {}
+MASHUP_DEFAULTS = {"min_score": 0.9, "small_ratio": 0.3, "same_thr": 0.5}
+BODY_MIN_SCORE = 0.55          # người (cả thân) phát hiện với độ tin cậy từ mức này mới tính
+BODY_MIN_H = 0.18              # và cao ít nhất chừng này so với chiều cao ảnh (bỏ người quá nhỏ ở xa / hình trên áp phích nhỏ)
+FACE_STRONG = 0.95             # mặt không nằm trong người nào: chỉ tính nếu điểm nhận diện rất cao
+
+
+def mashup_params(db):
+    """Ngưỡng đếm người: mặc định, hoặc giá trị đã tự hiệu chỉnh theo thư viện (calibrate_mashup)."""
+    out = dict(MASHUP_DEFAULTS)
+    for k in out:
+        v = db.get_meta("mashup_" + k)
+        if v:
+            try:
+                out[k] = float(v)
+            except ValueError:
+                pass
+    return out
+
+
+def _dedupe_faces(fl, min_score, small_ratio, same_thr):
+    """Mặt của MỘT ảnh -> các mặt 'thật' (bỏ mặt quá nhỏ so với mặt chính; hai mặt giống hệt nhau như bóng gương chỉ tính một). fl: [(diện tích, vectơ, điểm, tâm x, tâm y)]."""
+    fl = sorted((f for f in fl if f[2] >= min_score), key=lambda t: -t[0])
+    kept = []
+    for f in fl:
+        if kept and f[0] < small_ratio * fl[0][0]:
+            continue
+        v = _unit(f[1])
+        if any(float(v @ k[1]) >= same_thr for k in kept):
+            continue
+        kept.append((f[0], v, f[2], f[3], f[4]))
+    return kept
+
+
+def fuse_count(kept, all_faces, bodies):
+    """Số người trong ảnh = ghép KHUÔN MẶT với NGƯỜI (cả thân) phát hiện được:
+    - mặt thật nằm trong một người được xác nhận; mỗi mặt thật là một người;
+    - người không có khuôn mặt nào (quay lưng, che mặt) vẫn được tính, trừ khi trong khung người đó có một mặt đã bị loại (bóng gương, áp phích);
+    - mặt thật không nằm trong người nào (mặt cận cảnh, thân bị cắt) chỉ tính nếu điểm nhận diện rất cao."""
+    def inside(cx, cy, b):
+        x, y, w, h = b[:4]
+        return x - 0.05 * w <= cx <= x + w * 1.05 and y - 0.05 * h <= cy <= y + h * 1.05
+    bodies = [b for b in bodies if b[4] >= BODY_MIN_SCORE and b[3] >= BODY_MIN_H]
+    n_faces_in = sum(1 for f in kept if any(inside(f[3], f[4], b) for b in bodies))
+    n_body_only = sum(1 for b in bodies if not any(inside(f[3], f[4], b) for f in all_faces))
+    n_face_only = sum(1 for f in kept if f[2] >= FACE_STRONG and not any(inside(f[3], f[4], b) for b in bodies))
+    return n_faces_in + n_body_only + n_face_only
+
+
+def mashup_counts(db, params=None):
+    """{mã ảnh: số người} cho ảnh có từ 2 người trở lên (đã bỏ ảnh trùng đã ẩn). Đếm theo khuôn mặt thật; nếu ảnh đã có dữ liệu phát hiện người (bảng image_body) thì ghép cả hai."""
+    p = params or mashup_params(db)
     dim = face_dim(db)
+    hidden = {r["image_id"] for r in db.q("SELECT image_id FROM dup_hidden")}
+    bodies = {}
+    for r in db.q("SELECT image_id, boxes FROM image_body"):
+        try:
+            bodies[r["image_id"]] = json.loads(r["boxes"] or "[]")
+        except ValueError:
+            bodies[r["image_id"]] = []
+    ids = {r["image_id"] for r in db.q("""SELECT image_id FROM faces WHERE px>=? AND vec IS NOT NULL GROUP BY image_id HAVING COUNT(*)>=2""", (MIN_FACE_PX,))}
+    ids |= {i for i, bl in bodies.items() if sum(1 for b in bl if b[4] >= BODY_MIN_SCORE and b[3] >= BODY_MIN_H) >= 2}          # nhiều người quay lưng, ít mặt
+    ids = [i for i in ids if i not in hidden]
+    out = {}
     for k in range(0, len(ids), 400):
         chunk = ids[k:k + 400]
         by = {}
-        for r in db.q(f"SELECT image_id iid, w, h, score, vec FROM faces WHERE score>=? AND px>=? AND vec IS NOT NULL AND image_id IN ({','.join('?' * len(chunk))})",
-                      [min_score, MIN_FACE_PX, *chunk]):
+        for r in db.q(f"SELECT image_id iid, x, y, w, h, score, vec FROM faces WHERE px>=? AND vec IS NOT NULL AND image_id IN ({','.join('?' * len(chunk))})",
+                      [MIN_FACE_PX, *chunk]):
             if len(r["vec"]) == dim * 4:
-                by.setdefault(r["iid"], []).append(((r["w"] or 0.0) * (r["h"] or 0.0), blob_to_vec(r["vec"]).astype(np.float32)))
-        for iid, fl in by.items():
-            fl.sort(key=lambda t: -t[0])                          # mặt lớn trước
-            kept = []
-            for area, v in fl:
-                if kept and area < small_ratio * fl[0][0]:
-                    continue
-                v = _unit(v)
-                if any(float(v @ kv) >= same_thr for kv in kept):
-                    continue
-                kept.append(v)
-            if len(kept) >= 2:
-                out.setdefault(len(kept), []).append(iid)
+                by.setdefault(r["iid"], []).append(((r["w"] or 0.0) * (r["h"] or 0.0), blob_to_vec(r["vec"]).astype(np.float32), r["score"] or 0.0,
+                                                    (r["x"] or 0.0) + (r["w"] or 0.0) / 2, (r["y"] or 0.0) + (r["h"] or 0.0) / 2))
+        for iid in chunk:
+            fl = by.get(iid, [])
+            kept = _dedupe_faces(fl, p["min_score"], p["small_ratio"], p["same_thr"])
+            n = fuse_count(kept, fl, bodies[iid]) if iid in bodies else len(kept)
+            if n >= 2:
+                out[iid] = n
     return out
+
+
+def mashup_by_count(db, min_score=None, same_thr=None, small_ratio=None):
+    """Mashup chia theo SỐ NGƯỜI trong ảnh: {số người: [mã ảnh]} (từ 2 người trở lên). Xem mashup_counts."""
+    p = mashup_params(db)
+    for k, v in (("min_score", min_score), ("same_thr", same_thr), ("small_ratio", small_ratio)):
+        if v is not None:
+            p[k] = v
+    out = {}
+    for iid, n in mashup_counts(db, p).items():
+        out.setdefault(n, []).append(iid)
+    return out
+
+
+def calibrate_mashup(db, min_images=150):
+    """Tự hiệu chỉnh ngưỡng đếm mặt bằng số NGƯỜI phát hiện được làm chuẩn đối chiếu: thử các tổ hợp ngưỡng điểm mặt và tỉ lệ mặt nhỏ, chọn tổ hợp ít đếm thừa nhất
+    (đếm thiếu bị phạt nhẹ hơn vì người quay lưng không có mặt). Ghi vào cài đặt; trả về ngưỡng đã chọn hoặc None nếu chưa đủ dữ liệu."""
+    dim = face_dim(db)
+    ref = {}
+    for r in db.q("SELECT image_id, boxes FROM image_body WHERE n>=1"):
+        try:
+            bl = [b for b in json.loads(r["boxes"] or "[]") if b[4] >= BODY_MIN_SCORE and b[3] >= BODY_MIN_H]
+        except ValueError:
+            continue
+        if 1 <= len(bl) <= 8:
+            ref[r["image_id"]] = len(bl)
+    if len(ref) < min_images:
+        return None
+    ids = list(ref)
+    data = {}
+    for k in range(0, len(ids), 400):
+        chunk = ids[k:k + 400]
+        for r in db.q(f"SELECT image_id iid, w, h, score, vec FROM faces WHERE px>=? AND vec IS NOT NULL AND image_id IN ({','.join('?' * len(chunk))})", [MIN_FACE_PX, *chunk]):
+            if len(r["vec"]) == dim * 4:
+                data.setdefault(r["iid"], []).append(((r["w"] or 0.0) * (r["h"] or 0.0), blob_to_vec(r["vec"]).astype(np.float32), r["score"] or 0.0, 0.0, 0.0))
+    best = None
+    for ms in (0.8, 0.85, 0.9, 0.95):
+        for sr in (0.15, 0.2, 0.3, 0.4):
+            loss = 0.0
+            for iid, n_ref in ref.items():
+                n = len(_dedupe_faces(data.get(iid, []), ms, sr, MASHUP_DEFAULTS["same_thr"]))
+                loss += max(0, n - n_ref) * 1.0 + max(0, n_ref - n) * 0.4
+            if best is None or loss < best[0] - 1e-9:
+                best = (loss, ms, sr)
+    db.set_meta("mashup_min_score", str(best[1]))
+    db.set_meta("mashup_small_ratio", str(best[2]))
+    return {"min_score": best[1], "small_ratio": best[2], "images": len(ref), "loss": round(best[0], 1)}
+
+
+def ensure_bodies(db, engine, stop=lambda: False, batch=40, limit=None, read=None):
+    """Phát hiện người (cả thân) cho các ảnh chưa có dữ liệu, đọc từ ảnh nhỏ đã lưu (nhanh). Lưu vào image_body. Trả về số ảnh đã xử lý."""
+    from PIL import Image, ImageOps
+    import io
+    if read is None:
+        from .secure import SEC
+        read = SEC.read_file
+    rows = db.q("SELECT id, thumb FROM images WHERE thumb IS NOT NULL AND id NOT IN (SELECT image_id FROM image_body) ORDER BY id")
+    n = 0
+    for r in rows:
+        if stop() or (limit is not None and n >= limit):
+            break
+        try:
+            im = ImageOps.exif_transpose(Image.open(io.BytesIO(read(r["thumb"])))).convert("RGB")
+            res = engine.detect(np.asarray(im))
+            boxes = [[round(d["box"][0], 4), round(d["box"][1], 4), round(d["box"][2], 4), round(d["box"][3], 4), round(d["score"], 3)] for d in res]
+            db.c.execute("INSERT OR REPLACE INTO image_body(image_id,n,boxes) VALUES(?,?,?)", (r["id"], len(boxes), json.dumps(boxes)))
+        except Exception:
+            db.c.execute("INSERT OR REPLACE INTO image_body(image_id,n,boxes) VALUES(?,0,'[]')", (r["id"],))
+        n += 1
+        if n % batch == 0:
+            db.commit()
+    db.commit()
+    return n
 
 
 def photo_combos(db, min_photos=2, min_person_imgs=2):

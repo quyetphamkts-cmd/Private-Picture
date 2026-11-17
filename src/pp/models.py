@@ -15,6 +15,8 @@ FILES = {
     "clip_text.onnx": [HF + "onnx/text_model_quantized.onnx", HF + "onnx/text_model.onnx"],
     "clip_tokenizer.json": HF + "tokenizer.json",
 }
+FILES["yolox_tiny.onnx"] = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx"        # phát hiện người (YOLOX-Tiny, giấy phép Apache-2.0, khoảng 20 MB)
+BODY_FILES = ["yolox_tiny.onnx"]
 GH_BUFFALO = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 FILES["arcface.onnx"] = ["https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx",
                          {"zip": GH_BUFFALO, "member": "w600k_r50.onnx"}]       # ArcFace ResNet50 (WebFace600K), 512 chiều
@@ -95,6 +97,58 @@ def download(names, progress=None, cancel=lambda: False):
                     tmp.unlink()
         if last is not None:
             raise last
+
+
+class BodyEngine:
+    """Phát hiện NGƯỜI (cả thân, kể cả người quay lưng) bằng YOLOX-Tiny: dùng đối chiếu với số khuôn mặt để đếm người trong ảnh chính xác hơn. Không dùng chung giữa nhiều luồng."""
+    SIZE = 416
+
+    def __init__(self, threads=None):
+        import onnxruntime as ort
+        import cv2
+        self.cv2 = cv2
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = threads or max(1, (os.cpu_count() or 2) // 2)
+        self.sess = ort.InferenceSession(str(model_path("yolox_tiny.onnx")), so, providers=["CPUExecutionProvider"])
+        self.inp = self.sess.get_inputs()[0].name
+        grids, strides = [], []
+        for s in (8, 16, 32):
+            n = self.SIZE // s
+            xv, yv = np.meshgrid(np.arange(n), np.arange(n))
+            grids.append(np.stack((xv, yv), 2).reshape(-1, 2))
+            strides.append(np.full((n * n, 1), s))
+        self.grid, self.stride = np.concatenate(grids), np.concatenate(strides)
+
+    def close(self):
+        self.sess = None
+
+    def detect(self, rgb, min_score=0.45):
+        """Danh sách người trong ảnh: [{'box': (x, y, rộng, cao) chuẩn hóa 0–1, 'score': độ tin cậy}]."""
+        cv2 = self.cv2
+        h, w = rgb.shape[:2]
+        r = min(self.SIZE / h, self.SIZE / w)
+        nh, nw = max(1, int(h * r)), max(1, int(w * r))
+        im = cv2.resize(cv2.cvtColor(np.ascontiguousarray(rgb), cv2.COLOR_RGB2BGR), (nw, nh), interpolation=cv2.INTER_LINEAR)
+        canvas = np.full((self.SIZE, self.SIZE, 3), 114, np.uint8)
+        canvas[:nh, :nw] = im
+        out = self.sess.run(None, {self.inp: canvas.transpose(2, 0, 1)[None].astype(np.float32)})[0][0].copy()
+        out[:, :2] = (out[:, :2] + self.grid) * self.stride
+        out[:, 2:4] = np.exp(out[:, 2:4]) * self.stride
+        sc = out[:, 4] * out[:, 5]                                   # độ tin cậy vật thể × xác suất lớp 'người' (lớp 0 của COCO)
+        keep = sc >= min_score
+        if not keep.any():
+            return []
+        b = np.stack([out[keep, 0] - out[keep, 2] / 2, out[keep, 1] - out[keep, 3] / 2, out[keep, 2], out[keep, 3]], 1) / r
+        s = sc[keep]
+        idx = cv2.dnn.NMSBoxes(b.tolist(), s.tolist(), min_score, 0.5)
+        res = []
+        for i in np.array(idx).flatten():
+            x, y, bw, bh = b[i]
+            x0, y0 = max(0.0, x), max(0.0, y)
+            x1, y1 = min(float(w), x + bw), min(float(h), y + bh)
+            if x1 - x0 > 4 and y1 - y0 > 4:
+                res.append({"box": (x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h), "score": float(s[i])})
+        return res
 
 
 ARC_TEMPLATE = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]], np.float32)

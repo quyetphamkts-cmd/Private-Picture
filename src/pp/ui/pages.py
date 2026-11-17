@@ -3022,6 +3022,34 @@ class RefWorker(QThread):
         self.done.emit(n)
 
 
+class BodyWorker(QThread):
+    """Chạy nền: tải mô hình phát hiện người (một lần, khoảng 20 MB), phát hiện người cho ảnh chưa xử lý rồi tự hiệu chỉnh ngưỡng đếm người của Mashup."""
+    done = Signal(int)
+
+    def __init__(self, db):
+        super().__init__()
+        self.db = db
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        n = 0
+        try:
+            from .. import models, cluster
+            if not models.have(models.BODY_FILES):
+                models.download(models.BODY_FILES, cancel=lambda: self._stop)
+            if models.have(models.BODY_FILES):
+                eng = models.BodyEngine()
+                n = cluster.ensure_bodies(self.db, eng, stop=lambda: self._stop)
+                if n and not self._stop:
+                    cluster.calibrate_mashup(self.db)
+        except Exception:
+            pass
+        self.done.emit(n)
+
+
 class RefDialog(QDialog):
     """Ảnh tham chiếu từ internet: bật / tắt, khóa tìm kiếm web (tùy chọn) và chạy ngay."""
 

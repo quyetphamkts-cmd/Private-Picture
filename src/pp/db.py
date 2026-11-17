@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS archived(image_id INTEGER PRIMARY KEY, uid TEXT);
 CREATE TABLE IF NOT EXISTS image_art(image_id INTEGER PRIMARY KEY, p REAL, art INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS person_suggest(person_id INTEGER PRIMARY KEY, name TEXT, n_arch INTEGER, n_img INTEGER);
 CREATE TABLE IF NOT EXISTS face_reject(face_id INTEGER, person_id INTEGER, PRIMARY KEY(face_id, person_id));
+CREATE TABLE IF NOT EXISTS image_body(image_id INTEGER PRIMARY KEY, n INTEGER, boxes TEXT);          -- người (cả thân) phát hiện trong ảnh: [[x, y, rộng, cao, độ tin cậy], ...] chuẩn hóa 0–1
 CREATE TABLE IF NOT EXISTS person_ref(id INTEGER PRIMARY KEY, person_id INTEGER, dim INTEGER, vec BLOB, src TEXT);
 CREATE INDEX IF NOT EXISTS ix_ref_person ON person_ref(person_id);
 CREATE TABLE IF NOT EXISTS ref_state(person_id INTEGER PRIMARY KEY, ts REAL, n INTEGER, status TEXT);
@@ -149,7 +150,7 @@ class DB:
             one("SELECT COUNT(*) a FROM cloth_group"), one("SELECT COUNT(*) a FROM cloth_manual"),
             one("SELECT COUNT(*) a, COALESCE(SUM(state),0) b FROM person_guess"), one("SELECT COUNT(*) a FROM dup_hidden"),
             one("SELECT COUNT(*) a, COALESCE(SUM(grp='nude'),0) b FROM cloth_group"), one("SELECT COUNT(*) a, COALESCE(SUM(grp='nude'),0) b FROM cloth_manual"),
-            one("SELECT COUNT(*) a, COALESCE(MAX(ts),0) b FROM edit_ts")))          # mọi chỉnh sửa của người dùng đều đóng dấu thời gian: đổi bất kỳ thứ gì (kể cả đổi loại ảnh, từ chối đề xuất) là chữ ký đổi
+            one("SELECT COUNT(*) a, COALESCE(MAX(ts),0) b FROM edit_ts"), one("SELECT COUNT(*) a FROM image_body")))          # mọi chỉnh sửa của người dùng đều đóng dấu thời gian: đổi bất kỳ thứ gì (kể cả đổi loại ảnh, từ chối đề xuất) là chữ ký đổi
 
     def snapshot(self):
         """Ghi dữ liệu xuống đĩa (mã hóa nếu có khóa). Dữ liệu không đổi kể từ lần ghi trước thì bỏ qua (tránh mã hóa và ghi lại cả tệp hàng trăm MB vô ích)."""
