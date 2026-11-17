@@ -4015,8 +4015,7 @@ class SettingsPage(Page):
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.v.addWidget(self.list, 1)
         bar = QHBoxLayout()
-        for text, fn in [("Thêm thư mục…", self.add), ("Nâng lên mức mã hóa cả ảnh gốc…", self.upgrade),
-                         ("Bỏ thư mục đã chọn", self.remove)]:
+        for text, fn in [("Thêm thư mục…", self.add), ("Bỏ thư mục đã chọn", self.remove)]:          # không còn nút nâng mức mã hóa: quét, phân loại, mã hóa, tải lên Drive và xóa ảnh gốc đều tự động
             b = QPushButton(text)
             b.clicked.connect(fn)
             bar.addWidget(b)
