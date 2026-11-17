@@ -1,0 +1,73 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["android/**", ".github/workflows/android.yml", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Cài thư viện
+        run: pip install -r requirements.txt pyinstaller pytest scikit-image
+      - name: Gói 7-Zip để đọc RAR, 7z và các định dạng nén khác
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force assets/7z | Out-Null
+          Copy-Item "C:\Program Files\7-Zip\7z.exe","C:\Program Files\7-Zip\7z.dll","C:\Program Files\7-Zip\License.txt" assets/7z/
+      - name: Kiểm thử (gồm mô hình thật)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest -q -rs tests 2>&1 | Tee-Object -FilePath pytest.log
+          # Đọc kết quả thật: đôi khi tiến trình lỗi lúc dọn dẹp khi thoát (ONNX/Qt) dù mọi kiểm thử đã đạt
+          $last = (Select-String -Path pytest.log -Pattern '^(=+ )?\d+ (passed|failed|error)' | Select-Object -Last 1).Line
+          Write-Host "Tổng kết: $last"
+          if (-not $last -or $last -notmatch '^\d+ passed' -or $last -match 'failed|error') { throw "Kiểm thử không đạt" }
+          exit 0
+      - name: Ghi số phiên bản
+        shell: pwsh
+        run: Set-Content -Path src/pp/_version.py -Value '__version__ = "0.1.${{ github.run_number }}"'
+      - name: Đóng gói exe
+        run: >
+          pyinstaller --noconfirm --windowed --name PrivatePicture --icon assets/logo.ico --paths src
+          --collect-all pillow_heif --collect-all tokenizers --collect-all onnxruntime
+          --add-data "assets;assets" --collect-submodules watchdog
+          main.py
+      - name: Kiểm tra bản exe
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -c "from skimage import data; from PIL import Image; Image.fromarray(data.astronaut()).save('astro.png')"
+          Start-Process -Wait -FilePath "dist\PrivatePicture\PrivatePicture.exe" -ArgumentList "--selftest","selftest.txt","astro.png"
+          Get-Content selftest.txt
+          if (-not (Select-String -Path selftest.txt -Pattern '^OK$' -Quiet)) { throw "Bản exe không qua kiểm tra" }
+      - name: Nén
+        shell: pwsh
+        run: python -c "import shutil; shutil.make_archive('PrivatePicture-Windows', 'zip', 'dist', 'PrivatePicture')"
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true            # hết hạn mức lưu trữ artifact của GitHub không được chặn việc đăng bản lên Releases
+        with:
+          name: PrivatePicture-Windows
+          path: PrivatePicture-Windows.zip
+          retention-days: 1
+      - name: Đăng bản mới nhất lên Releases
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_NO: ${{ github.run_number }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          gh release create latest PrivatePicture-Windows.zip --title "Bản mới nhất (v0.1.$env:RUN_NO)" --notes "version=0.1.$env:RUN_NO`nTải PrivatePicture-Windows.zip, giải nén, chạy PrivatePicture.exe. Xem README để biết cách dùng."
