@@ -1488,13 +1488,7 @@ fun AllPhotos(open: (List<Img>, Int) -> Unit, focus: String? = null, favOnly: Bo
         if (msg.isNotEmpty()) Text(msg, Modifier.align(Alignment.TopCenter).padding(top = 66.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp), color = Color.White, style = MaterialTheme.typography.bodySmall)
         TopBar(Modifier.align(Alignment.TopStart),
             left = {
-                if (Store.selected.isNotEmpty()) RoundBtn(onClick = { Store.selected = emptySet() }) { BtnIcon("close") }
-                else RoundBtn(onClick = {
-                    if (!loading) {
-                        loading = true; msg = "Đang tải lại…"
-                        scope.launch { try { Store.reload { msg = it }; msg = "Đã cập nhật từ máy tính" } catch (e: Exception) { msg = e.message ?: "Lỗi" } finally { loading = false; delay(2500); msg = "" } }
-                    }
-                }) { BtnText("↻") }
+                if (Store.selected.isNotEmpty()) RoundBtn(onClick = { Store.selected = emptySet() }) { BtnIcon("close") }          // chưa chọn ảnh: không có nút nào bên trái (đã bỏ nút tải lại, app tự nhận dữ liệu mới từ PC)
                 if (selecting) RoundBtn(onClick = onAdd) { BtnIcon("add") }
             },
             center = {
