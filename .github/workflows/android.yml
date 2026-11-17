@@ -15,11 +15,16 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
+      - name: Giải mã khóa ký bằng mật khẩu trong Secrets
+        env:
+          PP_KEY_PASS: ${{ secrets.PP_KEY_PASS }}
+        run: openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in android/app/pp.keystore.enc -out "$RUNNER_TEMP/pp.keystore" -pass env:PP_KEY_PASS
       - name: Build
         working-directory: android
         env:
           PP_VERSION_CODE: ${{ github.run_number }}
           PP_VERSION_NAME: 0.1.${{ github.run_number }}
+          PP_KEYSTORE_FILE: ${{ runner.temp }}/pp.keystore
         run: gradle --no-daemon assembleRelease
       - name: Publish apk to release
         env:
