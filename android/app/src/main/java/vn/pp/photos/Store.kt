@@ -160,6 +160,7 @@ object Store {
         onStep("Đang tải danh mục…")
         val idx = JSONObject(Crypto.unseal(k, Drive.download(idOf("index.pe") ?: throw RuntimeException("Chưa có index.pe: máy tính chưa đồng bộ xong, hoặc Google Drive trên máy tính chưa tải lên xong. Chờ biểu tượng Drive ngừng quay rồi thử lại."))).toString(Charsets.UTF_8))
         parse(idx)
+        applyPendingLocal()                                        // áp dụng ngay các thao tác của điện thoại chưa được PC nhận (không chờ mạng): mở lại app không thấy ảnh đã xác nhận "quay về chưa xác nhận"
         loadIdCache()                                              // danh sách tệp ảnh nhỏ / ảnh gốc của lần trước: dùng ngay, làm mới ở nền
         inboxId = idOf("inbox")
         rootFolderId = root
@@ -492,7 +493,7 @@ object Store {
     private fun savePending(list: List<Pending>) {
         val arr = JSONArray()
         for (p in list) arr.put(JSONObject().put("name", p.name).put("ops", p.ops).put("sent", p.sent))
-        prefs.edit().putString("list", arr.toString()).apply()
+        prefs.edit().putString("list", arr.toString()).commit()          // ghi đồng bộ xuống bộ nhớ: tắt app ngay sau khi bấm cũng không mất thao tác (apply() có thể chưa kịp ghi)
     }
 
     private suspend fun upload(p: Pending): Boolean {
@@ -525,6 +526,14 @@ object Store {
     }
 
     private val pendLock = Any()                                   // mọi thao tác đọc / ghi hàng đợi chờ gửi đều qua khóa này (nhiều thao tác nhanh liên tiếp không ghi đè nhau)
+
+    /** Áp dụng lại các thao tác còn chờ lên dữ liệu vừa tải (chỉ đọc bộ nhớ điện thoại, không dùng mạng). Thao tác PC đã xác nhận nhận thì bỏ qua. */
+    private fun applyPendingLocal() {
+        val ak = acked
+        val list = synchronized(pendLock) { loadPending() }
+        for (p in list) if (ak == null || p.name !in ak) try { applyOps(JSONArray(p.ops)) } catch (e: Exception) { }
+        version++
+    }
 
     private fun enqueue(ops: JSONArray): Pending = synchronized(pendLock) {
         val p = Pending("android-${System.currentTimeMillis()}-${(1000..9999).random()}.pe", ops.toString(), false)
