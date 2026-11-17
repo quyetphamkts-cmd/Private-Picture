@@ -451,7 +451,6 @@ fun Main() {
                             color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                }
             }
             if (sel.isNotEmpty() && here.isEmpty() && viewer == null && !personView) {
                 Text("Chưa chọn ảnh nào trong danh sách này (còn ${sel.size} ảnh đã chọn ở tab khác, vẫn được giữ)", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
