@@ -420,7 +420,8 @@ fun Main() {
                                 undo = UndoItem("Đã loại ${ids.size} ảnh khỏi đề xuất", ids) { Store.guessRestore(pp, ids) }
                             }
                         },
-                        onLocate = { val u = here.firstOrNull(); if (u != null) { Store.selected = emptySet(); screen = Screen.Tabs; area = "all"; locateUid = u } }) { screen = Screen.PersonView(s.p) }
+                        onLocate = { val u = here.firstOrNull(); if (u != null) { Store.selected = emptySet(); screen = Screen.Tabs; area = "all"; locateUid = u } },
+                        onClassify = { c, n -> doClassify(c, n) }) { screen = Screen.PersonView(s.p) }
                     is Screen.LabelView -> LabelScreen(s.l, open) { screen = Screen.Tabs }
                     else -> holder.SaveableStateProvider(area) {
                         when (area) {
@@ -702,14 +703,15 @@ fun TopBar(modifier: Modifier, left: @Composable RowScope.() -> Unit, center: @C
 
 /** Ô dài gộp 3 nút Dressed | Naked | All ở giữa hàng nút phía trên ảnh (nền đen mờ như các nút tròn, ô đang chọn tô màu vàng đồng). */
 @Composable
-fun ClothPill(cloth: String?, selecting: Boolean, third: String? = null, thirdOn: Boolean = false, onThird: () -> Unit = {}, showThird: Boolean = true, onPick: (String?) -> Unit) {
+fun ClothPill(cloth: String?, selecting: Boolean, third: String? = null, thirdOn: Boolean = false, onThird: () -> Unit = {}, showThird: Boolean = true, thirdKind: String? = null, onPick: (String?) -> Unit) {
     val d = LocalBtn.current
     Row(Modifier.width(d * (if (showThird) 3 else 2)).height(d).clip(CircleShape).background(BtnFill).border(1.5.dp, BtnLine, CircleShape)) {          // rộng đúng 3 hình tròn
         val opts = if (showThird) listOf<String?>("cloth", "nude", null) else listOf<String?>("cloth", "nude")
         for (c in opts) {
-            val on = if (c == null && third != null) thirdOn else cloth == c && !selecting
-            Box(Modifier.size(d).clip(CircleShape).background(if (on) Brass else Color.Transparent).clickable { if (c == null && third != null) onThird() else onPick(c) }, contentAlignment = Alignment.Center) {   // ô sáng là hình tròn hoàn hảo
-                if (c == null && third != null) BtnText(third)
+            val on = if (c == null && (third != null || thirdKind != null)) thirdOn else cloth == c && !selecting
+            Box(Modifier.size(d).clip(CircleShape).background(if (on) Brass else Color.Transparent).clickable { if (c == null && (third != null || thirdKind != null)) onThird() else onPick(c) }, contentAlignment = Alignment.Center) {   // ô sáng là hình tròn hoàn hảo
+                if (c == null && thirdKind != null) BtnIcon(thirdKind)
+                else if (c == null && third != null) BtnText(third)
                 else if (c == null) BtnText("All", true) else KindIcon(c, Color.White, d * 0.52f)
             }
         }
@@ -1787,7 +1789,7 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
 /** Trang đề xuất: ảnh app chưa chắc chắn là của người này (như bên PC). Chọn ảnh rồi bấm tick = đúng người, người+ = thêm vào tên khác, người− = không phải người này; ✕ bỏ chọn / quay lại, Enter tới vị trí ảnh. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Unit, onAdd: () -> Unit, onReject: () -> Unit, onLocate: () -> Unit, back: () -> Unit) {
+fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Unit, onAdd: () -> Unit, onReject: () -> Unit, onLocate: () -> Unit, onClassify: (String, String) -> Unit, back: () -> Unit) {
     val v = Store.version
     val byUid = remember(Store.images) { Store.images.associateBy { it.uid } }
     val sugg = Store.suggestionsOf(p.id)
@@ -1815,17 +1817,19 @@ fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Uni
             }
         }
         if (list.isEmpty()) Text("Không còn ảnh nào cần xác nhận.", Modifier.padding(top = topBarSpace() + 30.dp, start = 16.dp), color = Color.Gray)
+        val selecting = Store.selected.any { it in uidIndex }                  // chưa chọn ảnh: chỉ hiện hai nút ngoài cùng (✕ và Enter); chọn ảnh rồi mới hiện các nút lệnh còn lại
         TopBar(Modifier.align(Alignment.TopStart),
-            left = { RoundBtn(onClick = { if (Store.selected.isNotEmpty()) Store.selected = emptySet() else back() }) { BtnIcon("close") } },
-            center = {
-                val d = LocalBtn.current
-                Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
-                    RoundBtn(onClick = onAccept) { BtnIcon("tick") }
-                    RoundBtn(onClick = onAdd) { BtnIcon("add") }
-                    RoundBtn(onClick = onReject) { BtnIcon("remove") }
-                }
+            left = {
+                RoundBtn(onClick = { if (Store.selected.isNotEmpty()) Store.selected = emptySet() else back() }) { BtnIcon("close") }
+                if (selecting) RoundBtn(onClick = onAdd) { BtnIcon("add") }
             },
-            right = { RoundBtn(onClick = onLocate) { BtnIcon("enter") } })
+            center = {
+                if (selecting) ClothPill(null, true, thirdKind = "tick", onThird = onAccept) { c -> if (c != null) onClassify(c, CLOTHES.first { it.first == c }.second) }
+            },
+            right = {
+                if (selecting) RoundBtn(onClick = onReject) { BtnIcon("remove") }
+                RoundBtn(onClick = onLocate) { BtnIcon("enter") }
+            })
     }
     if (v < 0) Text("")
 }
