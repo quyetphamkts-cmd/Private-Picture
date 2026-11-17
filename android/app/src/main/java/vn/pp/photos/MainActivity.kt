@@ -1876,6 +1876,7 @@ fun SearchScreen(open: (List<Img>, Int) -> Unit) {
 @Composable
 fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest: Person?, onPerson: (Person) -> Unit, onLocate: (Img) -> Unit, close: () -> Unit) {
     var removed by remember { mutableStateOf(setOf<String>()) }       // ảnh vừa loại khỏi danh sách: biến mất khỏi dải xem
+    var acceptedSuggest by remember { mutableStateOf(false) }        // lần xử lý gần nhất là xác nhận đúng người (hoàn tác: bỏ khỏi người đó và đưa về đề xuất)
     var removedSuggest by remember { mutableStateOf(false) }          // lần loại gần nhất là loại khỏi đề xuất (hoàn tác bằng guessRestore)
     var lastRemoved by remember { mutableStateOf<Pair<Person, String>?>(null) }     // để có nút Hoàn tác
     val list = remember(listIn, removed) { listIn.filter { it.uid !in removed } }
@@ -1939,6 +1940,30 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
             // phía trên: một hàng nút giống hệt hàng nút ngoài danh sách ảnh — ✕ và Thêm vào tên ở góc trái, ô dài Dressed | Naked | All ở giữa,
             // Loại khỏi danh sách (khi mở từ trang một người) và Tới vị trí (phím Enter, thay chỗ nút ⋯) ở góc phải. Áp dụng cho ảnh đang xem.
             val curCloth = Store.clothing[cur.uid]
+            if (fromSuggest != null) {
+                // xem từ trang đề xuất: hàng nút giống hệt trang đề xuất — ✕ trái, ba nút tròn giữa (tick đúng người, người+ thêm vào tên, người− không phải người này), Enter phải
+                TopBar(Modifier.align(Alignment.TopCenter),
+                    left = { RoundBtn(onClick = closeAll) { BtnIcon("close") } },
+                    center = {
+                        val d = LocalBtn.current
+                        Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
+                            RoundBtn(active = true, onClick = {
+                                scope.launch {
+                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng là ${fromSuggest.name.ifEmpty { "người này" }}" }
+                                    catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
+                                }
+                            }) { BtnIcon("tick") }
+                            RoundBtn(onClick = { pickDlg = true }) { BtnIcon("add") }
+                            RoundBtn(onClick = {
+                                scope.launch {
+                                    try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; acceptedSuggest = false; note = "Đã loại khỏi đề xuất của ${fromSuggest.name.ifEmpty { "người này" }}" }
+                                    catch (e: Exception) { note = "Không loại được: ${e.message}" }
+                                }
+                            }) { BtnIcon("remove") }
+                        }
+                    },
+                    right = { RoundBtn(onClick = { onLocate(cur) }) { BtnIcon("enter") } })
+            } else
             TopBar(Modifier.align(Alignment.TopCenter),
                 left = {
                     RoundBtn(onClick = closeAll) { BtnIcon("close") }
@@ -1989,7 +2014,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 if (note.isNotEmpty() || lastRemoved != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     if (note.isNotEmpty()) Text(note, Modifier.weight(1f, fill = false), color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
                     lastRemoved?.let { (pp, uid) ->
-                        TextButton({ scope.launch { try { if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
+                        TextButton({ scope.launch { try { if (acceptedSuggest) { Store.personRemove(pp, listOf(uid)); Store.guessRestore(pp, listOf(uid)) } else if (removedSuggest) Store.guessRestore(pp, listOf(uid)) else Store.personRestore(pp, listOf(uid)); removed = removed - uid; lastRemoved = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }) { Text("Hoàn tác", color = Color(0xFFE5C07B)) }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2002,10 +2027,10 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
     }
     if (pickDlg) PersonPickDialog({ pk ->
         pickDlg = false
-        scope.launch { try { Store.personAdd(pk, listOf(cur.uid)); note = "Đã thêm vào ${pk.name.ifEmpty { "Chưa đặt tên" }}" } catch (e: Exception) { note = "Không thêm được: ${e.message}" } }
+        scope.launch { try { Store.personAdd(pk, listOf(cur.uid)); note = "Đã thêm vào ${pk.name.ifEmpty { "Chưa đặt tên" }}"; if (fromSuggest != null) { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid } } catch (e: Exception) { note = "Không thêm được: ${e.message}" } }
     }, { nm ->
         pickDlg = false
-        scope.launch { try { Store.personCreate(nm, listOf(cur.uid)); note = "Đã tạo “${nm.trim()}” và thêm ảnh này" } catch (e: Exception) { note = "Không tạo được: ${e.message}" } }
+        scope.launch { try { Store.personCreate(nm, listOf(cur.uid)); note = "Đã tạo “${nm.trim()}” và thêm ảnh này"; if (fromSuggest != null) { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid } } catch (e: Exception) { note = "Không tạo được: ${e.message}" } }
     }, { pickDlg = false })
     if (info) {
         val people = (Store.personOf[cur.uid] ?: emptyList<Int>()).mapNotNull { id -> Store.persons.firstOrNull { it.id == id }?.name?.ifEmpty { "Chưa đặt tên" } }
