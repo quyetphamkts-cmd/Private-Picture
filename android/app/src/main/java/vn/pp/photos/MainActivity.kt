@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -619,7 +620,14 @@ fun KindIcon(kind: String, c: Color, dp: androidx.compose.ui.unit.Dp) {
 /** Nút tròn nổi trên ảnh (nền đen mờ, ảnh phía dưới vẫn thấy xung quanh). */
 @Composable
 fun RoundBtn(active: Boolean = false, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Box(Modifier.size(LocalBtn.current).clip(CircleShape).background(if (active) Brass else BtnFill).border(1.5.dp, BtnLine, CircleShape).clickable { onClick() }, contentAlignment = Alignment.Center) { content() }
+    // phản hồi để biết nút có hiệu lực: nút trạng thái (active) tô sáng liên tục; nút lệnh sáng lên khi đang chạm và nháy sáng một lần khi bấm xong
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    var flash by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val bg by androidx.compose.animation.animateColorAsState(if (active || pressed || flash) Brass else BtnFill, tween(110), label = "btn")
+    Box(Modifier.size(LocalBtn.current).clip(CircleShape).background(bg).border(1.5.dp, BtnLine, CircleShape)
+        .clickable(interactionSource = src, indication = null) { onClick(); scope.launch { flash = true; delay(280); flash = false } }, contentAlignment = Alignment.Center) { content() }
 }
 
 /** Đường kính D của các nút tròn hàng trên (bề ngang màn hình / 8,5); nền nút (BtnFill) trong suốt, chỉ có viền mảnh. */
@@ -1779,7 +1787,7 @@ fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Uni
             center = {
                 val d = LocalBtn.current
                 Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
-                    RoundBtn(active = true, onClick = onAccept) { BtnIcon("tick") }
+                    RoundBtn(onClick = onAccept) { BtnIcon("tick") }
                     RoundBtn(onClick = onAdd) { BtnIcon("add") }
                     RoundBtn(onClick = onReject) { BtnIcon("remove") }
                 }
@@ -1952,7 +1960,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                     center = {
                         val d = LocalBtn.current
                         Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
-                            RoundBtn(active = true, onClick = {
+                            RoundBtn(onClick = {
                                 scope.launch {
                                     try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
                                     catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
