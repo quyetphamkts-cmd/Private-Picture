@@ -89,6 +89,14 @@ def latest(token, repo=REPO, api=API):
     return {"version": m.group(1), "asset_url": asset["url"], "size": asset.get("size", 0), "notes": data.get("body", "")}
 
 
+def android_code(version):
+    """Mã phiên bản (versionCode) của APK từ số phiên bản 'major.minor.patch': tăng đều cả khi sang bản mới (0.1.99 → 99, 0.2.0 → 100, 0.2.99 → 199, 0.3.0 → 200)."""
+    p = [int(x) for x in version.split(".")]
+    while len(p) < 3:
+        p.append(0)
+    return p[0] * 100000 + (p[1] - 1) * 100 + p[2]
+
+
 def latest_android(token, repo=REPO, api=API):
     """Bản app Android mới nhất (release 'android-latest', tên có dạng 'App Android (v0.1.N)'; N cũng là mã phiên bản của APK)."""
     with _open(f"{api}/repos/{repo}/releases/tags/android-latest", token) as r:
@@ -97,7 +105,7 @@ def latest_android(token, repo=REPO, api=API):
     asset = next((a for a in data.get("assets", []) if a["name"].endswith(".apk")), None)
     if not m or not asset:
         raise UpdateError("Chưa có bản Android phát hành.")
-    return {"version": m.group(1), "code": int(m.group(2)), "asset_url": asset["url"], "size": asset.get("size", 0)}
+    return {"version": m.group(1), "code": android_code(m.group(1)), "asset_url": asset["url"], "size": asset.get("size", 0)}
 
 
 def download(info, token, dest, progress=None, cancel=lambda: False, tries=3):

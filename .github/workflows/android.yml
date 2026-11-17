@@ -2,7 +2,7 @@ name: Build Android apk
 on:
   push:
     branches: [main]
-    paths: ["android/**", ".github/workflows/android.yml"]
+    paths-ignore: ["docs/**"]            # mọi thay đổi đều dựng cả PC lẫn Android để hai app luôn cùng phiên bản
   workflow_dispatch:
 permissions:
   contents: write
@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Số phiên bản chung với bản PC
+        run: python3 tools/version.py android >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
@@ -22,8 +25,6 @@ jobs:
       - name: Build
         working-directory: android
         env:
-          PP_VERSION_CODE: ${{ github.run_number }}
-          PP_VERSION_NAME: 0.1.${{ github.run_number }}
           PP_KEYSTORE_FILE: ${{ runner.temp }}/pp.keystore
         run: gradle --no-daemon assembleRelease
       - name: Publish apk to release
@@ -32,4 +33,4 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk PrivatePicture-Android.apk
           gh release delete android-latest --yes --cleanup-tag >/dev/null 2>&1 || true          # tạo lại bản phát hành mỗi lần để thẻ luôn trỏ tới commit mới nhất
-          gh release create android-latest PrivatePicture-Android.apk --title "App Android (v0.1.${{ github.run_number }})" --notes "APK cài trên điện thoại Android"
+          gh release create android-latest PrivatePicture-Android.apk --title "App Android (v${{ env.PP_VERSION_NAME }})" --notes "APK cài trên điện thoại Android"

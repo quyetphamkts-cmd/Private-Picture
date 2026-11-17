@@ -3,7 +3,7 @@ name: Build Windows exe
 on:
   push:
     branches: [main]
-    paths-ignore: ["android/**", ".github/workflows/android.yml", "docs/**"]
+    paths-ignore: ["docs/**"]            # mọi thay đổi đều dựng cả PC lẫn Android để hai app luôn cùng phiên bản
   workflow_dispatch:
 
 permissions:
@@ -14,6 +14,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -37,7 +38,11 @@ jobs:
           exit 0
       - name: Ghi số phiên bản
         shell: pwsh
-        run: Set-Content -Path src/pp/_version.py -Value '__version__ = "0.1.${{ github.run_number }}"'
+        run: |
+          $kv = python tools/version.py pc          # số phiên bản chung với bản Android (PP_VERSION_NAME=...)
+          $ver = ($kv -split "=")[1].Trim()
+          Set-Content -Path src/pp/_version.py -Value ('__version__ = "' + $ver + '"')
+          "PP_VERSION_NAME=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Đóng gói exe
         run: >
           pyinstaller --noconfirm --windowed --name PrivatePicture --icon assets/logo.ico --paths src
@@ -67,7 +72,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_NO: ${{ github.run_number }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
-          gh release create latest PrivatePicture-Windows.zip --title "Bản mới nhất (v0.1.$env:RUN_NO)" --notes "version=0.1.$env:RUN_NO`nTải PrivatePicture-Windows.zip, giải nén, chạy PrivatePicture.exe. Xem README để biết cách dùng."
+          gh release create latest PrivatePicture-Windows.zip --title "Bản mới nhất (v$env:PP_VERSION_NAME)" --notes "version=$env:PP_VERSION_NAME`nTải PrivatePicture-Windows.zip, giải nén, chạy PrivatePicture.exe. Xem README để biết cách dùng."
