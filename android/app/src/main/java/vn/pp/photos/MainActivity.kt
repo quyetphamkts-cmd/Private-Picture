@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -1072,36 +1073,93 @@ private sealed class Entry {
     class Photo(val img: Img, val pos: Int, val span: Int = 1, val h: Float = 0f) : Entry()    // span / h: chỉ dùng ở bố cục Vừa vặn (hàng ảnh đầy bề ngang, cùng chiều cao)
 }
 
-/** Hai ngón chụm / giãn: gọi onStep(+1) khi GIÃN (to hơn, ít ô mỗi hàng hơn) và onStep(-1) khi CHỤM (nhỏ hơn, nhiều ô mỗi hàng hơn); một ngón vẫn cuộn bình thường. */
+/** Thu phóng mượt bằng hai ngón (như Google Ảnh): lưới phóng to / thu nhỏ THEO NGÓN TAY ngay khi đang chụm / giãn (neo tại điểm giữa hai ngón); vượt ngưỡng thì chuyển sang mức kế tiếp
+ *  (đổi số ô mỗi hàng) và phần phóng còn dư được trả về 1 từ từ, nên không bị giật. onStep(+1 = giãn / to hơn, -1 = chụm / nhỏ hơn) trả về hệ số kích thước ô mới / cũ, hoặc null nếu hết mức. */
+class PinchZoom(val scope: kotlinx.coroutines.CoroutineScope, val onStep: (Int) -> Float?) {
+    var live by mutableStateOf(1f)                      // hệ số phóng đang hiển thị
+    var origin by mutableStateOf(Offset.Zero)           // điểm giữa hai ngón (px, theo khung lưới): điểm neo của phép phóng
+    var size by mutableStateOf(androidx.compose.ui.unit.IntSize.Zero)
+    var settling: kotlinx.coroutines.Job? = null
+}
+
 @Composable
-fun Modifier.pinchSteps(onStep: (Int) -> Unit): Modifier {
+fun rememberPinchZoom(onStep: (Int) -> Float?): PinchZoom {
+    val scope = rememberCoroutineScope()
     val cb by androidx.compose.runtime.rememberUpdatedState(onStep)
-    return this.pointerInput(Unit) {
+    return remember { PinchZoom(scope) { cb(it) } }
+}
+
+fun Modifier.pinchZoom(pz: PinchZoom): Modifier = this
+    .onSizeChanged { pz.size = it }
+    .pointerInput(Unit) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            var base = 0f
+            var prev = 0f
+            var active = false
             while (true) {
                 val ev = awaitPointerEvent(PointerEventPass.Initial)
                 val pts = ev.changes.filter { it.pressed }
                 if (pts.isEmpty()) break
                 if (pts.size >= 2) {
                     val d = (pts[0].position - pts[1].position).getDistance()
-                    if (base == 0f) base = d
-                    else if (d / base > 1.3f) { cb(1); base = d }
-                    else if (d / base < 0.77f) { cb(-1); base = d }
+                    if (!active) { pz.settling?.cancel(); active = true; prev = d }
+                    else if (prev > 0f && d > 0f) {
+                        pz.origin = (pts[0].position + pts[1].position) / 2f
+                        pz.live = (pz.live * (d / prev)).coerceIn(0.55f, 2.2f)
+                        prev = d
+                        if (pz.live > 1.3f) { val f = pz.onStep(1); if (f != null) pz.live /= f else pz.live = pz.live.coerceAtMost(1.15f) }
+                        else if (pz.live < 0.78f) { val f = pz.onStep(-1); if (f != null) pz.live /= f else pz.live = pz.live.coerceAtLeast(0.88f) }
+                    }
                     ev.changes.forEach { it.consume() }
-                } else base = 0f
+                } else if (active) { active = false; prev = 0f }
+            }
+            if (pz.live != 1f) {                                   // thả tay: phần phóng dư trả về 1 từ từ
+                pz.settling = pz.scope.launch { androidx.compose.animation.core.animate(pz.live, 1f, animationSpec = tween(220)) { v, _ -> pz.live = v } }
             }
         }
     }
-}
+    .graphicsLayer {
+        scaleX = pz.live; scaleY = pz.live
+        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(
+            if (pz.size.width > 0) pz.origin.x / pz.size.width else 0.5f, if (pz.size.height > 0) pz.origin.y / pz.size.height else 0.5f)
+    }
 
-/** Mật độ lưới ảnh bằng chụm / giãn: Vừa vặn ↔ Ngày ↔ Tháng (cùng lựa chọn với Chế độ xem ảnh). */
-private fun stepLayout(step: Int) {
+/** Mật độ lưới ảnh: Vừa vặn ↔ Ngày ↔ Tháng. Trả về hệ số kích thước ô (mới / cũ) hoặc null nếu hết mức. */
+private fun stepLayout(step: Int): Float? {
     val order = listOf("fit", "day", "month")
     val i = order.indexOf(Store.layout).let { if (it < 0) 1 else it }
-    val n = (i - step).coerceIn(0, order.size - 1)                       // giãn (+1) về phía Vừa vặn (ảnh to), chụm (-1) về phía Tháng (ảnh nhỏ)
-    if (n != i) Store.setView(order[n], Store.showDates)
+    val n = i - step                                               // giãn (+1) về phía Vừa vặn (ảnh to), chụm (-1) về phía Tháng (ảnh nhỏ)
+    if (n < 0 || n > order.size - 1) return null
+    val cells = mapOf("fit" to 2.2f, "day" to 3f, "month" to 5f)  // số ô mỗi hàng gần đúng
+    val f = cells.getValue(order[i]) / cells.getValue(order[n])
+    Store.setView(order[n], Store.showDates)
+    return f
+}
+
+/** Sau khi đổi mật độ lưới bằng thu phóng: ảnh đang nằm dưới điểm giữa hai ngón vẫn nằm đúng chỗ đó trên màn hình (không bị trôi). */
+@Composable
+private fun LayoutAnchor(state: androidx.compose.foundation.lazy.grid.LazyGridState, entries: List<Entry>, pz: PinchZoom) {
+    var last by remember { mutableStateOf(Store.layout) }
+    val anchor = remember { arrayOfNulls<Pair<String, Int>>(1) }
+    if (last != Store.layout) {
+        val info = state.layoutInfo
+        val pad = info.beforeContentPadding
+        val c = pz.origin
+        val items = info.visibleItemsInfo.filter { it.key is String && (it.key as String).length > 2 && !(it.key as String).startsWith("h:") && !(it.key as String).startsWith("g:") }
+        val hit = items.firstOrNull { c.x >= it.offset.x && c.x < it.offset.x + it.size.width && c.y >= it.offset.y + pad && c.y < it.offset.y + pad + it.size.height } ?: items.firstOrNull()
+        anchor[0] = hit?.let { (it.key as String) to it.offset.y }
+        last = Store.layout
+    }
+    LaunchedEffect(Store.layout) {
+        val a = anchor[0] ?: return@LaunchedEffect
+        anchor[0] = null
+        val idx = entries.indexOfFirst { it is Entry.Photo && it.img.uid == a.first }
+        if (idx < 0) return@LaunchedEffect
+        state.scrollToItem(idx)
+        androidx.compose.runtime.withFrameNanos { }
+        val y = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }?.offset?.y ?: return@LaunchedEffect
+        if (y != a.second) state.dispatchRawDelta((y - a.second).toFloat())
+    }
 }
 
 /** Giữ nguyên vị trí đang xem khi danh sách đổi (ví dụ vừa chuyển các ảnh đã chọn sang loại khác nên chúng biến khỏi danh sách): lấy ảnh còn lại ở trên cùng màn hình làm mốc
@@ -1220,6 +1278,8 @@ fun TimelineGrid(list: List<Img>, open: (List<Img>, Int) -> Unit, focus: String?
         return (entries.lastOrNull { it is Entry.Photo } as? Entry.Photo)?.img?.taken ?: ""
     }
     KeepAnchor(state, entries)
+    val pz = rememberPinchZoom { stepLayout(it) }
+    LayoutAnchor(state, entries, pz)
     val uidIndex = remember(entries) { HashMap<String, Int>().also { m -> entries.forEachIndexed { i, e -> if (e is Entry.Photo) m[e.img.uid] = i } } }
     val scrolling = state.isScrollInProgress
     var dragging by remember { mutableStateOf(false) }
@@ -1235,7 +1295,7 @@ fun TimelineGrid(list: List<Img>, open: (List<Img>, Int) -> Unit, focus: String?
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
           androidx.compose.runtime.key(sig, fit, wdp) {                 // ảnh trong danh sách đổi (vừa chuyển loại): dựng lại các ô từ đầu để không bao giờ còn ô cũ nằm lại; vị trí cuộn giữ nguyên
-            LazyVerticalGrid(GridCells.Fixed(cols), Modifier.fillMaxSize().pinchSteps { stepLayout(it) }.dragSelect(state, { u -> uidIndex[u] ?: -1 }) { i -> (entries.getOrNull(i) as? Entry.Photo)?.img?.uid }, state = state, contentPadding = PaddingValues(top = topPad), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            LazyVerticalGrid(GridCells.Fixed(cols), Modifier.fillMaxSize().pinchZoom(pz).dragSelect(state, { u -> uidIndex[u] ?: -1 }) { i -> (entries.getOrNull(i) as? Entry.Photo)?.img?.uid }, state = state, contentPadding = PaddingValues(top = topPad), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 items(entries.size, key = { i -> when (val e = entries[i]) { is Entry.Header -> e.key; is Entry.Photo -> e.img.uid } },
                     span = { i -> val e = entries[i]; if (e is Entry.Header) GridItemSpan(maxLineSpan) else GridItemSpan((e as Entry.Photo).span) }) { i ->
                     when (val e = entries[i]) {
@@ -1532,7 +1592,11 @@ fun PersonGrid(list: List<Person>, covers: Map<Int, String>, cols: Int, onOpen: 
     }
     val colsNow by androidx.compose.runtime.rememberUpdatedState(cols)
     val zoomCb by androidx.compose.runtime.rememberUpdatedState(onZoom)
-    val zoomMod = Modifier.pinchSteps { st -> zoomCb?.invoke((colsNow - st).coerceIn(3, 5)) }      // giãn = ít người mỗi hàng hơn (thẻ to hơn), chụm = nhiều người mỗi hàng hơn; chỉ 3, 4, 5
+    val mpz = rememberPinchZoom { st ->                                // giãn = ít người mỗi hàng hơn (thẻ to hơn), chụm = nhiều người mỗi hàng hơn; chỉ 3, 4, 5
+        val n = colsNow - st
+        if (n < 3 || n > 5 || zoomCb == null) null else { zoomCb?.invoke(n); colsNow.toFloat() / n }
+    }
+    val zoomMod = Modifier.pinchZoom(mpz)
     LazyVerticalGrid(GridCells.Fixed(cols), Modifier.fillMaxSize().then(zoomMod), state = gs, contentPadding = PaddingValues(6.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         if (header != null) item(key = "head", span = { GridItemSpan(maxLineSpan) }) {                 // chữ cái + số lượng người ở đầu danh sách, cuộn lên cùng danh sách
@@ -1974,6 +2038,8 @@ fun GroupedGrid(groups: List<Pair<String, List<Img>>>, open: (List<Img>, Int) ->
     }
     val gstate = rememberLazyGridState()
     KeepAnchor(gstate, entries)
+    val gpz = rememberPinchZoom { stepLayout(it) }
+    LayoutAnchor(gstate, entries, gpz)
     val uidIndex = remember(entries) { HashMap<String, Int>().also { m -> entries.forEachIndexed { i, e -> if (e is Entry.Photo) m[e.img.uid] = i } } }
     LaunchedEffect(Store.focusTick) {                               // vừa xem ảnh xong: cuộn tới ảnh đó
         val u = Store.focusUid
@@ -1984,7 +2050,7 @@ fun GroupedGrid(groups: List<Pair<String, List<Img>>>, open: (List<Img>, Int) ->
     }
     Column(Modifier.fillMaxSize()) {
       androidx.compose.runtime.key(gsig, gfit, gw) {
-        LazyVerticalGrid(GridCells.Fixed(gcols), Modifier.fillMaxSize().pinchSteps { stepLayout(it) }.dragSelect(gstate, { u -> uidIndex[u] ?: -1 }) { i -> (entries.getOrNull(i) as? Entry.Photo)?.img?.uid }, state = gstate, contentPadding = PaddingValues(top = topPad), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        LazyVerticalGrid(GridCells.Fixed(gcols), Modifier.fillMaxSize().pinchZoom(gpz).dragSelect(gstate, { u -> uidIndex[u] ?: -1 }) { i -> (entries.getOrNull(i) as? Entry.Photo)?.img?.uid }, state = gstate, contentPadding = PaddingValues(top = topPad), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items(entries.size, key = { i -> when (val e = entries[i]) { is Entry.Header -> e.key; is Entry.Photo -> e.img.uid } },
                 span = { i -> val e = entries[i]; if (e is Entry.Header) GridItemSpan(maxLineSpan) else GridItemSpan((e as Entry.Photo).span) }) { i ->
                 when (val e = entries[i]) {
