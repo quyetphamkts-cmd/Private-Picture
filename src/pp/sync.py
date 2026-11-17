@@ -224,7 +224,7 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
         _al.strip_favorite_auto(db)                          # ngôi sao chỉ do bạn tự bấm: gỡ các ngôi sao app từng tự gán nhầm
     except Exception:
         pass
-    persons = [{"id": p["id"], "name": p["name"], "n": p["n"]} for p in db.persons()]
+    persons = [{"id": p["id"], "name": p["name"], "n": p["n"], "fav": 1 if p["favorite"] else 0} for p in db.persons()]
     link = []
     for p in persons:
         for r in db.person_images(p["id"]):
@@ -246,7 +246,8 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
     guesses = [[uids[r["image_id"]], r["person_id"], round(float(r["score"] or 0), 3)] for r in db.q("SELECT image_id,person_id,score FROM person_guess WHERE state=0")
                if r["image_id"] in uids and r["person_id"] in pids]
     index = {"v": 1, "updated": time.time(), "images": entries, "persons": persons, "image_person": link, "clothing": cloth,
-             "labels": labels, "label_images": label_links, "combos": combos, "covers": covers, "guesses": guesses}
+             "labels": labels, "label_images": label_links, "combos": combos, "covers": covers, "guesses": guesses,
+             "acked": [r["name"] for r in db.q("SELECT name FROM inbox_done ORDER BY ts DESC LIMIT 2000")]}          # thao tác điện thoại PC đã nhận và áp dụng (hoặc đã xét)
     _write(os.path.join(root, "index.pe"), seal(key, json.dumps(index, ensure_ascii=False).encode("utf-8")))
     keep = set(uids.values()) | {r["uid"] for r in db.q("SELECT uid FROM archived")}      # không bao giờ dọn bản đã là bản duy nhất
     for sub in ("thumbs", "orig"):
@@ -395,6 +396,12 @@ def apply_inbox(db, dest, key):
                         db.x("UPDATE person_guess SET state=0 WHERE image_id=? AND person_id=? AND state=1", (iid, pid))      # hoàn tác: về lại đề xuất
                     _stamp(db, [f"pimg:{pid}|{iid}"], ts)
                     n += 1
+            elif kind == "person_fav" and db.one("SELECT 1 FROM persons WHERE id=?", (op.get("person_id"),)):
+                pid = op["person_id"]
+                if _newer(db, f"fav:{pid}", ts):
+                    db.c.execute("UPDATE persons SET favorite=? WHERE id=?", (1 if op.get("fav") else 0, pid))
+                    _stamp(db, [f"fav:{pid}"], ts)                              # trái tim người: điện thoại bấm thì PC cập nhật theo (và ngược lại qua danh mục)
+                    n += 1
             elif kind == "person_remove" and op.get("image_uid") in by_uid:
                 pid, iid = op.get("person_id"), by_uid[op["image_uid"]]
                 if _newer(db, f"pimg:{pid}|{iid}", ts):
@@ -402,9 +409,11 @@ def apply_inbox(db, dest, key):
                     _stamp(db, [f"pimg:{pid}|{iid}"], ts)
                     n += 1
         try:
+            db.c.execute("INSERT OR REPLACE INTO inbox_done(name,ts) VALUES(?,?)", (fn, time.time()))        # ghi nhận trước khi xóa tệp
             os.remove(p)
         except OSError:
             pass
+    db.c.execute("DELETE FROM inbox_done WHERE ts<?", (time.time() - 7 * 86400,))
     db.commit()
     return n
 

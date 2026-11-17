@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS ref_flag(person_id INTEGER PRIMARY KEY, sim REAL, n I
 CREATE TABLE IF NOT EXISTS person_candidates(person_id INTEGER, name TEXT, score REAL, PRIMARY KEY(person_id, name));
 CREATE TABLE IF NOT EXISTS cover_used(person_id INTEGER, kind TEXT, face_id INTEGER, PRIMARY KEY(person_id, kind, face_id));
 CREATE TABLE IF NOT EXISTS cloth_manual(image_id INTEGER PRIMARY KEY, grp TEXT);
+CREATE TABLE IF NOT EXISTS inbox_done(name TEXT PRIMARY KEY, ts REAL);             -- tên các tệp thao tác của điện thoại PC đã xử lý: đưa vào danh mục để điện thoại biết chắc thao tác nào đã được nhận
+CREATE TRIGGER IF NOT EXISTS t_cloth_ins AFTER INSERT ON cloth_manual BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
+CREATE TRIGGER IF NOT EXISTS t_cloth_upd AFTER UPDATE ON cloth_manual BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
+CREATE TRIGGER IF NOT EXISTS t_cloth_del AFTER DELETE ON cloth_manual BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||OLD.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
+CREATE TRIGGER IF NOT EXISTS t_guess_upd AFTER UPDATE OF state ON person_guess BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
+CREATE TRIGGER IF NOT EXISTS t_guess_ins AFTER INSERT ON person_guess WHEN NEW.state<>0 BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
+CREATE TRIGGER IF NOT EXISTS t_pimg_new AFTER UPDATE OF person_id ON faces WHEN NEW.person_id IS NOT NULL AND OLD.person_id IS NOT NEW.person_id BEGIN
+  INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
 CREATE TABLE IF NOT EXISTS cloth_group(image_id INTEGER PRIMARY KEY, grp TEXT, p REAL);
 CREATE TABLE IF NOT EXISTS clothing(image_id INTEGER PRIMARY KEY, cat TEXT, prob REAL);
 CREATE TABLE IF NOT EXISTS dup_hidden(image_id INTEGER PRIMARY KEY, keep_id INTEGER);
@@ -117,6 +130,8 @@ class DB:
         self.con.execute("UPDATE persons SET cover_face=NULL WHERE cover_face IS NOT NULL")      # bỏ các lựa chọn tay cũ
         if "lsrc" not in {r["name"] for r in self.con.execute("PRAGMA table_info(faces)")}:
             self.con.execute("ALTER TABLE faces ADD COLUMN lsrc TEXT")          # 'user' = người dùng tự chỉnh tay (không bao giờ bị app sửa lại)
+        self.con.execute("""CREATE TRIGGER IF NOT EXISTS t_pfav AFTER UPDATE OF favorite ON persons BEGIN
+            INSERT OR REPLACE INTO edit_ts VALUES('fav:'||NEW.id, (julianday('now') - 2440587.5) * 86400.0); END""")             # trái tim người: bên nào bấm sau cùng thì thắng (PC <-> điện thoại)
         self.con.commit()
 
     @property
@@ -132,7 +147,9 @@ class DB:
             one("SELECT COUNT(*) a, COUNT(name) b, COALESCE(SUM(hidden),0) c, COALESCE(SUM(favorite),0) d FROM persons"),
             one("SELECT COUNT(*) a FROM label_images"), one("SELECT COUNT(*) a FROM labels"),
             one("SELECT COUNT(*) a FROM cloth_group"), one("SELECT COUNT(*) a FROM cloth_manual"),
-            one("SELECT COUNT(*) a FROM person_guess WHERE state=2"), one("SELECT COUNT(*) a FROM dup_hidden")))
+            one("SELECT COUNT(*) a, COALESCE(SUM(state),0) b FROM person_guess"), one("SELECT COUNT(*) a FROM dup_hidden"),
+            one("SELECT COUNT(*) a, COALESCE(SUM(grp='nude'),0) b FROM cloth_group"), one("SELECT COUNT(*) a, COALESCE(SUM(grp='nude'),0) b FROM cloth_manual"),
+            one("SELECT COUNT(*) a, COALESCE(MAX(ts),0) b FROM edit_ts")))          # mọi chỉnh sửa của người dùng đều đóng dấu thời gian: đổi bất kỳ thứ gì (kể cả đổi loại ảnh, từ chối đề xuất) là chữ ký đổi
 
     def snapshot(self):
         """Ghi dữ liệu xuống đĩa (mã hóa nếu có khóa). Dữ liệu không đổi kể từ lần ghi trước thì bỏ qua (tránh mã hóa và ghi lại cả tệp hàng trăm MB vô ích)."""

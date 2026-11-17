@@ -388,3 +388,41 @@ def test_commons_reference_urls_require_exact_human_name():
     urls = refimg.commons_urls("Jane Doe", get=fake)
     assert len(urls) == 1 and urls[0].endswith("?width=700") and "Jane_Doe.jpg" in urls[0]
     assert refimg.commons_urls("Nobody Here", get=fake) == []                                          # tên không khớp đúng: không đoán
+
+
+def test_changes_are_stamped_and_signature_changes_for_every_edit_kind(lib, tmp_path):
+    pics, db = _setup(lib)
+    sig0 = db.library_sig()
+    iid = db.one("SELECT id FROM images WHERE thumb IS NOT NULL LIMIT 1")["id"]
+    pid = db.persons()[0]["id"]
+    from pp import clothing
+    clothing.set_manual(db, [iid], "cloth")
+    s1 = db.library_sig()
+    assert s1 != sig0 and db.one("SELECT 1 FROM edit_ts WHERE k=?", (f"cloth:{iid}",))               # phân loại tay được đóng dấu
+    clothing.set_manual(db, [iid], "nude")
+    assert db.library_sig() != s1                                                                     # đổi loại (không đổi số lượng) cũng đổi chữ ký
+    db.x("INSERT OR REPLACE INTO person_guess(image_id,person_id,score,state) VALUES(?,?,0.7,0)", (iid, pid))
+    s2 = db.library_sig()
+    db.x("UPDATE person_guess SET state=1 WHERE image_id=? AND person_id=?", (iid, pid))
+    assert db.library_sig() != s2 and db.one("SELECT 1 FROM edit_ts WHERE k=?", (f"pimg:{pid}|{iid}",))   # từ chối đề xuất được đóng dấu
+    s3 = db.library_sig()
+    db.toggle_favorite(pid)
+    assert db.library_sig() != s3 and db.one("SELECT 1 FROM edit_ts WHERE k=?", (f"fav:{pid}",))
+
+
+def test_phone_ops_are_acked_in_index_and_favorite_syncs_both_ways(lib, tmp_path):
+    import base64
+    pics, db = _setup(lib)
+    dest = str(tmp_path / "drive")
+    sync.run(db, dest, "pw", include_originals=False)
+    key = sync.setup(dest, "pw")
+    pid = db.persons()[0]["id"]
+    sync.post_ops(dest, key, "android", [{"op": "person_fav", "person_id": pid, "fav": True}])
+    sync.run(db, dest, "pw", include_originals=False)
+    assert db.one("SELECT favorite FROM persons WHERE id=?", (pid,))["favorite"] == 1               # điện thoại bấm trái tim -> PC cập nhật
+    root = sync.root_of(dest)
+    j = json.load(open(os.path.join(root, "sync.json")))
+    k = secure.derive("pw", base64.b64decode(j["salt"]))
+    idx = json.loads(unseal(k, open(os.path.join(root, "index.pe"), "rb").read()))
+    assert any(p["id"] == pid and p["fav"] == 1 for p in idx["persons"])                            # danh mục đưa trái tim ngược lại cho điện thoại
+    assert len(idx["acked"]) >= 1                                                                   # danh mục ghi rõ thao tác nào PC đã nhận

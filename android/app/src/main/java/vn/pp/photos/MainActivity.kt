@@ -362,6 +362,13 @@ fun Main() {
     EdgeBack(Store.selected.isNotEmpty() && viewer == null) { Store.selected = emptySet() }     // vuốt từ cạnh màn hình: bỏ chọn
     // tự nhận dữ liệu mới từ máy tính: khi app đang mở, mỗi 90 giây kiểm tra Drive, PC đã đồng bộ mới thì tải lại ở nền (không cần bấm ↻)
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {                  // mở lại app (hoặc quay lại từ app khác): kiểm tra ngay xem PC có dữ liệu mới không
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch { try { Store.refreshIfRemoteChanged() } catch (e: Exception) { } }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             delay(90_000)

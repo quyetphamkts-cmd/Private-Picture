@@ -110,9 +110,14 @@ object Store {
 
     /** Bật / tắt trái tim Favorite của một người. */
     fun toggleFavPerson(id: Int) {
-        favPersons = if (id in favPersons) favPersons - id else favPersons + id
+        val on = id !in favPersons
+        favPersons = if (on) favPersons + id else favPersons - id                   // đổi trên điện thoại ngay
         favPrefs.edit().putStringSet("persons", favPersons.map { it.toString() }.toSet()).apply()
+        bgScope.launch { try { commit(JSONArray().put(op("person_fav").put("person_id", id).put("fav", on))) } catch (e: Exception) { } }          // và gửi cho PC (bên nào bấm sau cùng thì thắng)
     }
+
+    /** Thao tác điện thoại gửi mà PC đã xác nhận nhận / xét xong (danh mục ghi rõ). null nếu danh mục cũ chưa có thông tin này. */
+    private var acked: Set<String>? = null
 
     /** Tải lại dữ liệu từ Drive (sau khi PC đồng bộ), giữ nguyên các thay đổi của điện thoại chưa được PC xử lý. */
     suspend fun reload(onStep: (String) -> Unit = {}) {
@@ -235,6 +240,19 @@ object Store {
         images = l
         val ps = j.getJSONArray("persons")
         persons = (0 until ps.length()).map { ps.getJSONObject(it).let { o -> Person(o.getInt("id"), o.optString("name").let { n -> if (n == "null") "" else n }, o.optInt("n")) } }
+        val favFromIndex = (0 until ps.length()).map { ps.getJSONObject(it) }.filter { it.optInt("fav") == 1 }.map { it.getInt("id") }.toSet()
+        if (ps.length() > 0 && ps.getJSONObject(0).has("fav")) {                      // trái tim người cũng đồng bộ hai chiều: danh mục là nguồn chính
+            if (!favPrefs.getBoolean("migrated", false)) {                              // lần đầu: trái tim đã bấm riêng trên điện thoại trước đây được gửi cho PC
+                val legacy = favPrefs.getStringSet("persons", emptySet())?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet()
+                favPrefs.edit().putBoolean("migrated", true).apply()
+                val extra = legacy - favFromIndex
+                if (extra.isNotEmpty()) { val ops = JSONArray(); for (id in extra) ops.put(op("person_fav").put("person_id", id).put("fav", true)); enqueue(ops).let { pp -> bgScope.launch { try { if (upload(pp)) markSent(pp.name) } catch (e: Exception) { } } } }
+                favPersons = favFromIndex + extra
+            } else favPersons = favFromIndex
+            favPrefs.edit().putStringSet("persons", favPersons.map { it.toString() }.toSet()).apply()
+        }
+        val ak = j.optJSONArray("acked")
+        acked = if (ak == null) null else (0 until ak.length()).map { ak.getString(it) }.toSet()
         val ls = j.getJSONArray("labels")
         labels = (0 until ls.length()).map { ls.getJSONObject(it).let { o -> Label(o.getInt("id"), o.getString("name")) } }
         val ip = j.getJSONArray("image_person")
@@ -495,7 +513,10 @@ object Store {
         val list = synchronized(pendLock) {
             var l = loadPending()
             // thao tác PC đã nhận (đã biến khỏi inbox) vẫn được giữ thêm 15 phút và áp dụng lên dữ liệu vừa tải: tránh nhìn thấy ảnh đã xác nhận "quay lại chưa xác nhận" khi tải về danh mục cũ hơn lúc PC xử lý xong
-            if (present != null) l = l.filter { !it.sent || it.name in present || System.currentTimeMillis() - createdAt(it.name) < 15 * 60 * 1000 }.toMutableList()
+            val ak = acked
+            val week = 7 * 24 * 3600 * 1000L
+            if (ak != null) l = l.filter { it.name !in ak && System.currentTimeMillis() - createdAt(it.name) < week }.toMutableList()      // bỏ thao tác khi PC đã xác nhận nhận (danh mục ghi rõ) hoặc quá 7 ngày: không còn đoán theo thời gian
+            else if (present != null) l = l.filter { !it.sent || it.name in present || System.currentTimeMillis() - createdAt(it.name) < 15 * 60 * 1000 }.toMutableList()
             savePending(l)
             l
         }
@@ -583,6 +604,10 @@ object Store {
                         if (!l.contains(pid)) l.add(pid)
                         recountPersons()
                     }
+                }
+                "person_fav" -> {                                          // trái tim người (đồng bộ hai chiều)
+                    val pid = o.getInt("person_id")
+                    favPersons = if (o.optBoolean("fav")) favPersons + pid else favPersons - pid
                 }
                 "guess_restore" -> {                                      // hoàn tác: ảnh về lại danh sách đề xuất
                     val pid = o.getInt("person_id"); val u = o.getString("image_uid")
