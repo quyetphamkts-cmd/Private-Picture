@@ -958,7 +958,7 @@ fun LabelActions(uids: List<String>, done: () -> Unit, select: (Set<String>) -> 
 
 /** Ngôi sao "béo" đầy đặn (cánh ngắn và tròn), căn theo khung bao nên nằm chính giữa ô chứa nó. */
 @Composable
-fun FatStar(modifier: Modifier, color: Color) {
+fun FatStar(modifier: Modifier, color: Color, filled: Boolean = true) {
     androidx.compose.foundation.Canvas(modifier) {
         val w = size.width
         val r = w * 0.5f
@@ -973,8 +973,8 @@ fun FatStar(modifier: Modifier, color: Color) {
             if (k == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
         path.close()
-        drawPath(path, color)
-        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.12f, join = androidx.compose.ui.graphics.StrokeJoin.Round))      // viền cùng màu bo tròn góc cho mập hơn
+        if (filled) drawPath(path, color)
+        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (filled) w * 0.12f else w * 0.09f, join = androidx.compose.ui.graphics.StrokeJoin.Round))      // viền bo tròn góc cho mập hơn
     }
 }
 
@@ -1549,14 +1549,17 @@ const val PAGE_SIZE = 50          // mỗi trang Model: lưới 5 cột x 10 hà
 fun HeartIcon(filled: Boolean, modifier: Modifier = Modifier) {
     androidx.compose.foundation.Canvas(modifier) {
         val w = size.width; val h = size.height
-        val path = androidx.compose.ui.graphics.Path().apply {
-            moveTo(w * 0.5f, h * 0.92f)
-            cubicTo(w * -0.15f, h * 0.45f, w * 0.12f, h * -0.05f, w * 0.5f, h * 0.28f)
-            cubicTo(w * 0.88f, h * -0.05f, w * 1.15f, h * 0.45f, w * 0.5f, h * 0.92f)
+        val path = androidx.compose.ui.graphics.Path().apply {                          // trái tim mập: hai thùy tròn đầy, hông phình, đáy nhọn ngắn
+            moveTo(w * 0.5f, h * 0.93f)
+            cubicTo(w * 0.04f, h * 0.62f, w * -0.06f, h * 0.20f, w * 0.24f, h * 0.10f)
+            cubicTo(w * 0.40f, h * 0.05f, w * 0.50f, h * 0.20f, w * 0.50f, h * 0.30f)
+            cubicTo(w * 0.50f, h * 0.20f, w * 0.60f, h * 0.05f, w * 0.76f, h * 0.10f)
+            cubicTo(w * 1.06f, h * 0.20f, w * 0.96f, h * 0.62f, w * 0.50f, h * 0.93f)
             close()
         }
-        if (filled) drawPath(path, Color(0xFFFF5A6E))
-        else drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.11f))
+        val round = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.16f, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        if (filled) { drawPath(path, Color(0xFFFF5A6E)); drawPath(path, Color(0xFFFF5A6E), style = round) }      // viền cùng màu bo tròn: mập, đầy đặn hơn
+        else drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.13f, join = androidx.compose.ui.graphics.StrokeJoin.Round))
     }
 }
 
@@ -2073,9 +2076,11 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                         }
                     }
                     // ngôi sao Yêu thích: chỉ hình ngôi sao, không khung; được chọn thì vàng và sáng lên
-                    Text(if (isFav) "★" else "☆", Modifier.clickable { scope.launch { try { Store.toggleFav(cur.uid) } catch (e: Exception) { } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
-                        color = if (isFav) Color(0xFFFFD05A) else Color.White, fontSize = 24.sp,
-                        style = androidx.compose.ui.text.TextStyle(shadow = if (isFav) androidx.compose.ui.graphics.Shadow(Color(0xCCFFD05A), Offset.Zero, 18f) else null))
+                    Box(Modifier.clickable { scope.launch { try { Store.toggleFav(cur.uid) } catch (e: Exception) { } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp, end = 2.dp), contentAlignment = Alignment.Center) {
+                        // cùng ngôi sao béo như ở lưới ảnh: sao vàng sáng (có quầng sáng) khi đã yêu thích, sao viền trắng khi chưa
+                        if (isFav) Box(Modifier.size(26.dp).background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0x66FFD05A), Color.Transparent)), CircleShape))
+                        FatStar(Modifier.size(22.dp), if (isFav) Color(0xFFFFD05A) else Color.White, filled = isFav)
+                    }
                 }
                 if (labs.isNotEmpty()) Text("Nhãn: " + labs.joinToString(", "), color = Color.White, style = MaterialTheme.typography.bodySmall)
                 if (note.isNotEmpty() || lastRemoved != null || clothUndo != null) Row(verticalAlignment = Alignment.CenterVertically) {
