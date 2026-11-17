@@ -459,11 +459,11 @@ fun Main() {
                     }
                 }
             }
-            if (sel.isNotEmpty() && here.isEmpty() && viewer == null && !personView) {
+            if (sel.isNotEmpty() && here.isEmpty() && viewer == null && !personView && screen !is Screen.Suggest) {
                 Text("Chưa chọn ảnh nào trong danh sách này (còn ${sel.size} ảnh đã chọn ở tab khác, vẫn được giữ)", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
                     color = Color.Gray, style = MaterialTheme.typography.bodySmall)
             }
-            if (here.isNotEmpty() && viewer == null && !personView && area != "all") {   // thanh thao tác dưới khi đang chọn ảnh (trang một người dùng các nút tròn nổi)
+            if (here.isNotEmpty() && viewer == null && !personView && screen !is Screen.Suggest && area != "all") {   // thanh thao tác dưới (trang người và trang đề xuất đã có nút lệnh ở hàng trên) khi đang chọn ảnh (trang một người dùng các nút tròn nổi)
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     SelAction("add", "Thêm vào tên") { dlg = "add" }
                     if (area != "all") for ((code, name) in CLOTHES) SelAction(code, name) { doClassify(code, name) }          // tab All đã có Dressed / Naked ở các nút tròn phía trên; còn lại: bấm Dressed / Naked: các ảnh đã chọn chuyển ngay sang loại đó
