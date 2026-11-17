@@ -595,9 +595,9 @@ object Store {
     }
 
     private suspend fun commit(ops: JSONArray) {
-        applyOps(ops)
+        applyOps(ops)                                              // áp dụng trên điện thoại NGAY: giao diện đổi tức thì
         version++
-        post(ops)
+        bgScope.launch { try { post(ops) } catch (e: Exception) { } }          // gửi lên Drive ở nền, không bắt người dùng chờ mạng
     }
 
     private fun op(kind: String) = JSONObject().put("op", kind).put("ts", System.currentTimeMillis() / 1000.0)

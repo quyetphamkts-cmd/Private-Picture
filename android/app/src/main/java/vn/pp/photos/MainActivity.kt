@@ -1993,7 +1993,8 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                         Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
                             RoundBtn(onClick = {
                                 scope.launch {
-                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
+                                    removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid
+                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
                                     catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
                                 }
                             }) { BtnIcon("tick") }
@@ -2020,9 +2021,10 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                             try {
                                 if (c != null) {
                                     val prev = Store.clothing[cur.uid]
-                                    Store.setCloth(listOf(cur.uid), c)
+                                    val u = cur.uid
+                                    if (c != prev) { removed = removed + u; clothUndo = u to prev }          // đổi loại: chuyển sang ảnh kế tiếp NGAY, không chờ xử lý (Hoàn tác để khôi phục)
                                     note = "Đã chuyển sang ${CLOTHES.first { it.first == c }.second}"
-                                    if (c != prev) { removed = removed + cur.uid; clothUndo = cur.uid to prev }        // đổi loại: ảnh sang đúng nhóm mới, biến khỏi dải đang xem ngay và chuyển sang ảnh kế tiếp (Hoàn tác để khôi phục)
+                                    try { Store.setCloth(listOf(u), c) } catch (e: Exception) { removed = removed - u; clothUndo = null; note = "Không phân loại được: ${e.message}" }
                                 }
                             } catch (e: Exception) { note = "Không phân loại được: ${e.message}" }
                         }
