@@ -951,7 +951,7 @@ fun LabelActions(uids: List<String>, done: () -> Unit, select: (Set<String>) -> 
             mode = ""
             val thr = if (lv.startsWith("Rất")) 0.90f else if (lv.startsWith("Giống")) 0.85f else 0.80f
             scope.launch {
-                if (!Store.ensureClip()) note = "Chưa có dữ liệu nhận diện nội dung ảnh. Trên máy tính bấm Đồng bộ ngay, chờ Drive tải lên, rồi bấm ↻ tải lại."
+                if (!Store.ensureClip()) note = "Chưa có dữ liệu nhận diện nội dung ảnh. Máy tính sẽ tự đồng bộ; app sẽ tự nhận khi Drive tải lên xong."
                 else {
                     val ids = Store.similar(uids, pool, thr).toSet() + uids
                     select(ids)
@@ -1724,18 +1724,11 @@ fun ModelScreen(onOpen: (Person) -> Unit) {
 fun SettingsScreen() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    var msg by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
     val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" } }
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Cài đặt", style = MaterialTheme.typography.headlineSmall)
         Text("Phiên bản: $ver", color = Color.Gray)
-        Button({
-            loading = true; msg = ""
-            scope.launch { try { Store.reload { msg = it }; msg = "Đã cập nhật từ máy tính" } catch (e: Exception) { msg = e.message ?: "Lỗi" } finally { loading = false } }
-        }, enabled = !loading) { Text("Tải lại dữ liệu từ máy tính") }
-        if (loading) CircularProgressIndicator()
-        if (msg.isNotEmpty()) Text(msg, color = Color.Gray)
+        Text("Dữ liệu từ máy tính được cập nhật tự động.", color = Color.Gray)
     }
 }
 
@@ -1890,7 +1883,7 @@ fun LabelScreen(l: Label, open: (List<Img>, Int) -> Unit, back: () -> Unit) {
         GridScreen("${cur.name} (${list.size})", list, open, back) {
             TextButton({
                 scope.launch {
-                    if (!Store.ensureClip()) note = "Chưa có dữ liệu nhận diện nội dung ảnh. Trên máy tính bấm Đồng bộ ngay, chờ Drive tải lên, rồi bấm ↻ tải lại."
+                    if (!Store.ensureClip()) note = "Chưa có dữ liệu nhận diện nội dung ảnh. Máy tính sẽ tự đồng bộ; app sẽ tự nhận khi Drive tải lên xong."
                     else { val r = Store.suggestFor(cur); sug = r; if (r.isEmpty()) note = "Chưa có ảnh nào giống ảnh trong nhãn này (cần ít nhất vài ảnh mẫu)." }
                 }
             }) { Text("Gợi ý ảnh giống") }
