@@ -1729,6 +1729,11 @@ fun SettingsScreen() {
         Text("Cài đặt", style = MaterialTheme.typography.headlineSmall)
         Text("Phiên bản: $ver", color = Color.Gray)
         Text("Dữ liệu từ máy tính được cập nhật tự động.", color = Color.Gray)
+        val v = Store.version
+        val upd = Store.indexUpdatedMs
+        Text("Danh mục từ máy tính tạo lúc: " + (if (upd > 0) java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(upd)) else "chưa có"), color = Color.Gray)
+        val unsent = remember(v) { Store.unsentCount() }
+        if (unsent > 0) Text("Thay đổi chờ gửi lên máy tính: $unsent (app tự thử gửi lại)", color = Color(0xFFE5C07B))
     }
 }
 

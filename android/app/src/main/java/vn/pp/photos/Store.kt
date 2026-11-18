@@ -229,7 +229,13 @@ object Store {
         } catch (e: Exception) { }
     }
 
+    var indexUpdatedMs by mutableStateOf(0L)                          // thời điểm PC tạo danh mục lần gần nhất (để người dùng thấy dữ liệu có mới không)
+
+    /** Số thay đổi trên điện thoại chưa gửi được lên PC (thường là 0; > 0 khi mất mạng hoặc Drive lỗi tạm thời). */
+    fun unsentCount(): Int = synchronized(pendLock) { loadPending().count { !it.sent } }
+
     private fun parse(j: JSONObject) {
+        indexUpdatedMs = (j.optDouble("updated", 0.0) * 1000).toLong()
         val im = j.getJSONArray("images")
         val l = ArrayList<Img>()
         for (i in 0 until im.length()) {
