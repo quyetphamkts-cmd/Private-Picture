@@ -1591,6 +1591,7 @@ fun PersonCard(p: Person, cover: String?, cols: Int, onOpen: (Person) -> Unit, n
             .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xD1000000)))))
         Column(Modifier.align(Alignment.BottomStart).padding(start = 3.dp, end = 3.dp, bottom = 3.dp)) {
             Text(p.name.ifEmpty { "Chưa đặt tên" }, Modifier.fillMaxWidth(), color = Color.White, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible, fontSize = fs.sp, lineHeight = (fs + 1f).sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            if (p.name.isEmpty() && p.sug.isNotEmpty()) Text("Có thể là ${p.sug}", Modifier.fillMaxWidth(), color = Color(0xFFE5C07B), maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible, fontSize = (fs - 1.5f).sp, lineHeight = (fs - 0.5f).sp)
             Text("${p.n} ảnh", Modifier.padding(top = 1.dp), color = Color(0xCCFFFFFF), fontSize = (fs - 1.5f).sp, lineHeight = (fs - 0.5f).sp)
         }
         Box(Modifier.align(Alignment.TopStart).padding(3.dp).size(18.dp).clip(CircleShape).background(Color(0x66000000)).clickable { Store.toggleFavPerson(p.id) },
@@ -1768,6 +1769,14 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
                         Text("$sugg", color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp))
                     }
                 }
+            }
+        }
+        if (p.name.isEmpty() && p.sug.isNotEmpty() && !selecting) {            // PC đoán tên (theo tên trên tệp nén): ✓ nhận tên, ✕ bỏ gợi ý
+            Row(Modifier.align(Alignment.TopCenter).padding(top = topBarSpace() + 4.dp, start = 12.dp, end = 12.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xE6221E17)).border(1.dp, Brass, RoundedCornerShape(20.dp)).padding(start = 14.dp, end = 5.dp, top = 5.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("Có thể là ${p.sug}" + if (p.sugN > 0) " · theo tên trên ${p.sugN} tệp nén" else "", Modifier.weight(1f, fill = false), color = Color(0xFFE5C07B), fontSize = 13.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Box(Modifier.padding(start = 10.dp).size(30.dp).clip(CircleShape).background(Brass).clickable { val nm = p.sug; scope.launch { Store.rename(p, nm) } }, contentAlignment = Alignment.Center) { Text("✓", color = Color.White, fontSize = 16.sp) }
+                Box(Modifier.padding(start = 6.dp).size(30.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable { scope.launch { Store.rejectNameSuggestion(p) } }, contentAlignment = Alignment.Center) { Text("✕", color = Color.White, fontSize = 14.sp) }
             }
         }
         // hàng nút phía trên: ← (✕ khi đang chọn) và Thêm vào tên ở góc trái; ô dài Dressed | Naked | All ở giữa; Loại khỏi danh sách và ⋯ ở góc phải

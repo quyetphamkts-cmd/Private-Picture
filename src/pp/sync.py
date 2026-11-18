@@ -225,6 +225,12 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
     except Exception:
         pass
     persons = [{"id": p["id"], "name": p["name"], "n": p["n"], "fav": 1 if p["favorite"] else 0} for p in db.persons()]
+    sugs = {r["person_id"]: r for r in db.q("SELECT person_id,name,n_arch FROM person_suggest")}
+    for p in persons:                                         # người chưa đặt tên: kèm tên PC đoán là đúng (theo tên trên tệp nén) để điện thoại hiện gợi ý
+        sg = sugs.get(p["id"])
+        if sg and not (p["name"] or "").strip() and (sg["name"] or "").strip():
+            p["sug"] = sg["name"]
+            p["sugn"] = sg["n_arch"] or 0
     link = []
     for p in persons:
         for r in db.person_images(p["id"]):
@@ -301,8 +307,13 @@ def apply_inbox(db, dest, key):
                 pid = op.get("person_id")
                 if db.one("SELECT 1 FROM persons WHERE id=?", (pid,)) and _newer(db, f"pname:{pid}", ts):
                     cluster.rename_person(db, pid, op.get("name") or "")
+                    db.x("DELETE FROM person_suggest WHERE person_id=?", (pid,))
                     _stamp(db, [f"pname:{pid}"], ts)
                     n += 1
+            elif kind == "person_suggest_reject" and db.one("SELECT 1 FROM persons WHERE id=?", (op.get("person_id"),)):
+                db.x("DELETE FROM person_suggest WHERE person_id=?", (op["person_id"],))
+                db.x("DELETE FROM person_candidates WHERE person_id=?", (op["person_id"],))
+                n += 1
             elif kind in ("label_add", "label_remove"):
                 name = (op.get("name") or "").strip()
                 iid = by_uid.get(op.get("image_uid"))

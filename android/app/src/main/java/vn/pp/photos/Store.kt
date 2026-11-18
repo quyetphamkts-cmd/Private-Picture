@@ -20,7 +20,7 @@ import org.json.JSONObject
 import java.io.File
 
 class Img(val uid: String, val name: String, val taken: String, val w: Int, val h: Int, val orig: Boolean)
-class Person(val id: Int, var name: String, val n: Int)
+class Person(val id: Int, var name: String, val n: Int, var sug: String = "", var sugN: Int = 0)
 class Label(val id: Int, val name: String)
 class Combo(val names: List<String>, val archives: Int, val uids: List<String>, val flag: Boolean = false, val issues: List<String> = emptyList())
 class Job(val provider: String, val kind: String, val created: String, val status: String)
@@ -240,7 +240,7 @@ object Store {
         l.sortByDescending { it.taken }
         images = l
         val ps = j.getJSONArray("persons")
-        persons = (0 until ps.length()).map { ps.getJSONObject(it).let { o -> Person(o.getInt("id"), o.optString("name").let { n -> if (n == "null") "" else n }, o.optInt("n")) } }
+        persons = (0 until ps.length()).map { ps.getJSONObject(it).let { o -> Person(o.getInt("id"), o.optString("name").let { n -> if (n == "null") "" else n }, o.optInt("n"), o.optString("sug"), o.optInt("sugn")) } }
         val favFromIndex = (0 until ps.length()).map { ps.getJSONObject(it) }.filter { it.optInt("fav") == 1 }.map { it.getInt("id") }.toSet()
         if (ps.length() > 0 && ps.getJSONObject(0).has("fav")) {                      // trái tim người cũng đồng bộ hai chiều: danh mục là nguồn chính
             if (!favPrefs.getBoolean("migrated", false)) {                              // lần đầu: trái tim đã bấm riêng trên điện thoại trước đây được gửi cho PC
@@ -562,7 +562,7 @@ object Store {
     }
 
     private fun recountPersons() {
-        persons = persons.map { p -> Person(p.id, p.name, personOf.values.count { it.contains(p.id) }) }
+        persons = persons.map { p -> Person(p.id, p.name, personOf.values.count { it.contains(p.id) }, p.sug, p.sugN) }
     }
 
     /** Áp dụng các thao tác lên dữ liệu trong bộ nhớ (dùng cho cả thao tác mới và các thay đổi chưa được PC xử lý). */
@@ -570,7 +570,8 @@ object Store {
         for (i in 0 until ops.length()) {
             val o = ops.getJSONObject(i)
             when (o.getString("op")) {
-                "rename_person" -> persons.firstOrNull { it.id == o.getInt("person_id") }?.name = o.optString("name")
+                "rename_person" -> persons.firstOrNull { it.id == o.getInt("person_id") }?.let { it.name = o.optString("name"); it.sug = "" }
+                "person_suggest_reject" -> persons.firstOrNull { it.id == o.getInt("person_id") }?.sug = ""
                 "label_add" -> {
                     val l = labelByName(o.getString("name"))
                     labelOf.getOrPut(o.getString("image_uid")) { mutableSetOf() }.add(l.id)
@@ -672,6 +673,8 @@ object Store {
         val on = !isFav(uid)
         commit(JSONArray().put(op(if (on) "label_add" else "label_remove").put("image_uid", uid).put("name", "Yêu thích")))
     }
+
+    suspend fun rejectNameSuggestion(p: Person) = commit(JSONArray().put(op("person_suggest_reject").put("person_id", p.id)))
 
     suspend fun rename(p: Person, name: String) =
         commit(JSONArray().put(op("rename_person").put("person_id", p.id).put("name", name)))

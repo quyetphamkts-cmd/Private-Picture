@@ -426,3 +426,25 @@ def test_phone_ops_are_acked_in_index_and_favorite_syncs_both_ways(lib, tmp_path
     idx = json.loads(unseal(k, open(os.path.join(root, "index.pe"), "rb").read()))
     assert any(p["id"] == pid and p["fav"] == 1 for p in idx["persons"])                            # danh mục đưa trái tim ngược lại cho điện thoại
     assert len(idx["acked"]) >= 1                                                                   # danh mục ghi rõ thao tác nào PC đã nhận
+
+
+def test_name_suggestion_published_and_cleared(lib, tmp_path):
+    import base64
+    pics, db = _setup(lib)
+    dest = str(tmp_path / "drive")
+    pids = [p["id"] for p in db.persons()][:2]
+    for pid in pids:
+        cluster.rename_person(db, pid, "")
+        db.x("INSERT OR REPLACE INTO person_suggest(person_id,name,n_arch,n_img) VALUES(?,?,?,?)", (pid, "Lan Anh", 3, 5))
+    sync.run(db, dest, "pw", include_originals=False)
+    root = sync.root_of(dest)
+    j = json.load(open(os.path.join(root, "sync.json")))
+    key = secure.derive("pw", base64.b64decode(j["salt"]))
+    idx = json.loads(unseal(key, open(os.path.join(root, "index.pe"), "rb").read()))
+    ps = {p["id"]: p for p in idx["persons"]}
+    assert ps[pids[0]]["sug"] == "Lan Anh" and ps[pids[0]]["sugn"] == 3
+    sync.post_ops(dest, key, "android", [{"op": "rename_person", "person_id": pids[0], "name": "Lan Anh"},
+                                         {"op": "person_suggest_reject", "person_id": pids[1]}])
+    sync.run(db, dest, "pw", include_originals=False)
+    assert db.one("SELECT name FROM persons WHERE id=?", (pids[0],))["name"] == "Lan Anh"
+    assert not db.q("SELECT 1 FROM person_suggest WHERE person_id IN (?,?)", tuple(pids))
