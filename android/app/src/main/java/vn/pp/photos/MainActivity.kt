@@ -302,6 +302,7 @@ sealed class Screen {
 fun UpdateChecker() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var upd by remember { mutableStateOf<AppUpdate?>(null) }
+    var ghNew by remember { mutableStateOf<Pair<String, String>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -310,6 +311,18 @@ fun UpdateChecker() {
             androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(ctx.packageManager.getPackageInfo(ctx.packageName, 0))
         } catch (e: Exception) { Long.MAX_VALUE }
         upd = Store.checkUpdate(code)
+        if (upd == null) {
+            val installed = try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
+            val gh = Store.latestOnGithub()
+            if (gh != null && installed.isNotEmpty() && Store.isNewer(gh.first, installed)) ghNew = gh
+        }
+    }
+    val g = ghNew
+    if (g != null && upd == null) {
+        AlertDialog(onDismissRequest = { ghNew = null }, title = { Text("Có bản mới ${g.first}") },
+            text = { Text("Bấm Tải về để tải và cài bản mới (Android có thể hỏi cho phép cài từ trình duyệt).") },
+            confirmButton = { TextButton({ try { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(g.second)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { }; ghNew = null }) { Text("Tải về") } },
+            dismissButton = { TextButton({ ghNew = null }) { Text("Để sau") } })
     }
     val u = upd ?: return
     AlertDialog(onDismissRequest = { if (!busy) upd = null }, title = { Text("Có bản mới ${u.version}") },
@@ -1729,6 +1742,13 @@ fun SettingsScreen() {
         Text("Cài đặt", style = MaterialTheme.typography.headlineSmall)
         Text("Phiên bản: $ver", color = Color.Gray)
         Text("Dữ liệu từ máy tính được cập nhật tự động.", color = Color.Gray)
+        var latest by remember { mutableStateOf<Pair<String, String>?>(null) }
+        LaunchedEffect(Unit) { latest = Store.latestOnGithub() }
+        val lt = latest
+        val isNew = lt != null && Store.isNewer(lt.first, ver)
+        Text(if (lt == null) "Bản mới nhất: đang kiểm tra…" else if (isNew) "Có bản mới ${lt.first} (đang dùng $ver)" else "Bạn đang dùng bản mới nhất ($ver)", color = if (isNew) Color(0xFFE5C07B) else Color.Gray)
+        val openLink = { url: String -> try { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { } }
+        Button({ openLink(lt?.second ?: "https://github.com/quyetphamkts-cmd/Private-Picture/releases/download/android-latest/PrivatePicture-Android.apk") }) { Text("Tải bản mới nhất" + (if (lt != null) " (${lt.first})" else "")) }
         val v = Store.version
         val upd = Store.indexUpdatedMs
         Text("Danh mục từ máy tính tạo lúc: " + (if (upd > 0) java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(upd)) else "chưa có"), color = Color.Gray)

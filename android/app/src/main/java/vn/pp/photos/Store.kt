@@ -406,6 +406,27 @@ object Store {
         } catch (e: Exception) { null }
     }
 
+    /** Bản Android mới nhất trên GitHub (kho công khai): (số phiên bản, đường dẫn tải APK) hoặc null nếu không đọc được. */
+    suspend fun latestOnGithub(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        try {
+            val c = java.net.URL("https://api.github.com/repos/quyetphamkts-cmd/Private-Picture/releases/tags/android-latest").openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 8000; c.readTimeout = 8000
+            c.setRequestProperty("Accept", "application/vnd.github+json")
+            val j = JSONObject(c.inputStream.readBytes().toString(Charsets.UTF_8))
+            val ver = Regex("""v?(\d+\.\d+\.\d+)""").find(j.optString("name"))?.groupValues?.get(1) ?: return@withContext null
+            val assets = j.getJSONArray("assets")
+            val url = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") }?.optString("browser_download_url") ?: return@withContext null
+            ver to url
+        } catch (e: Exception) { null }
+    }
+
+    /** So sánh số phiên bản dạng 'a.b.c': true nếu a mới hơn b. */
+    fun isNewer(a: String, b: String): Boolean {
+        val x = a.split(".").map { it.toIntOrNull() ?: 0 }; val y = b.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(x.size, y.size)) { val d = (x.getOrElse(i) { 0 }) - (y.getOrElse(i) { 0 }); if (d != 0) return d > 0 }
+        return false
+    }
+
     suspend fun downloadApk(u: AppUpdate): File = withContext(Dispatchers.IO) {
         val f = File(cache, "update.apk")
         f.writeBytes(Drive.download(u.apkId))
