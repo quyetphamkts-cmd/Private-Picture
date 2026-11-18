@@ -506,6 +506,12 @@ object Store {
         } catch (e: Exception) { false }
     }
 
+    /** Gửi lại ngay các thao tác chưa gửi được (mất mạng, Drive lỗi tạm thời): gọi định kỳ và khi mở lại app, để PC nhận thay đổi sớm nhất có thể. */
+    suspend fun flushUnsent() {
+        val todo = synchronized(pendLock) { loadPending().filter { !it.sent } }
+        for (p in todo) if (upload(p)) markSent(p.name) else break
+    }
+
     private suspend fun syncPending() {
         val inbox = inboxId
         val snapshot = synchronized(pendLock) { loadPending() }

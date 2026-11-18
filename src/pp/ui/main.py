@@ -171,7 +171,18 @@ class MainWindow(QMainWindow):
                     self._scan_started = True
                     self.pages["settings"].auto_scan()
             self.pages["account"].updateIdle.connect(start_scan)
-            for ms, fn in ((800, self.pages["account"].auto_check), (180000, start_scan),
+            # thứ tự khởi động: (1) nhận ngay thay đổi từ điện thoại (đồng bộ bắt đầu bằng việc áp dụng inbox) -> (2) kiểm tra / cập nhật app -> (3) quét ảnh mới + phân tích mặt -> (4) quét xong tự đẩy lên cho điện thoại
+            self._update_started = False
+
+            def check_update():
+                if not self._update_started:
+                    self._update_started = True
+                    self.pages["account"].auto_check()
+
+            def pull_first():
+                if not self.start_sync(quiet=True, on_done=check_update):
+                    check_update()                                    # chưa cấu hình đồng bộ: kiểm tra cập nhật luôn
+            for ms, fn in ((300, pull_first), (45000, check_update), (180000, start_scan),
                            (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg), (150000, self.auto_bodies)):
                 t = QTimer(self)
                 t.setSingleShot(True)
@@ -194,8 +205,8 @@ class MainWindow(QMainWindow):
         self._bak_t.setInterval(10 * 60 * 1000)
         self._bak_t.timeout.connect(self.auto_backup)
         self._bak_t.start()
-        self._poll_t = QTimer(self)                         # mỗi 10 giây xem điện thoại có gửi chỉnh sửa lên không (chiều điện thoại -> PC)
-        self._poll_t.setInterval(10000)
+        self._poll_t = QTimer(self)                         # mỗi 5 giây xem điện thoại có gửi chỉnh sửa lên không (chiều điện thoại -> PC)
+        self._poll_t.setInterval(5000)
         self._poll_t.timeout.connect(self.poll_phone)
         self._poll_t.start()
 
@@ -253,7 +264,7 @@ class MainWindow(QMainWindow):
         db = self.ctx.db
         return bool(db.get_meta("sync_dir") and db.get_meta("sync_pw")) and (db.get_meta("sync_auto", "1") == "1" or db.get_meta("sync_after_scan", "1") == "1")
 
-    def start_sync(self, quiet=True):
+    def start_sync(self, quiet=True, on_done=None):
         """Đồng bộ hai chiều ngay: nhận chỉnh sửa từ điện thoại (thư mục inbox) rồi đẩy thư viện mới nhất lên Drive cho điện thoại. Trả về True nếu đã bắt đầu."""
         db = self.ctx.db
         if not self._sync_configured() or (getattr(self, "_sw", None) and self._sw.isRunning()):
@@ -276,6 +287,8 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(31 * 60 * 1000, self.clean_archives_auto)          # sau 31 phút (Drive đã kịp tải lên) mới giải phóng PC
             elif not quiet:
                 self.ctx.scan_status.emit("Đồng bộ gặp lỗi")
+            if on_done:
+                on_done()
         self._sw.done.connect(done)
         self._sw.start()
         return True

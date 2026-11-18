@@ -360,18 +360,24 @@ fun Main() {
         if (viewer != null) viewer = null else if (sc is Screen.Suggest) screen = Screen.PersonView(sc.p) else screen = Screen.Tabs
     }
     EdgeBack(Store.selected.isNotEmpty() && viewer == null) { Store.selected = emptySet() }     // vuốt từ cạnh màn hình: bỏ chọn
-    // tự nhận dữ liệu mới từ máy tính: khi app đang mở, mỗi 90 giây kiểm tra Drive, PC đã đồng bộ mới thì tải lại ở nền (không cần bấm ↻)
+    // tự nhận dữ liệu mới từ máy tính: khi app đang mở, mỗi 30 giây kiểm tra Drive, PC đã đồng bộ mới thì tải lại ở nền (không cần bấm ↻)
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {                  // mở lại app (hoặc quay lại từ app khác): kiểm tra ngay xem PC có dữ liệu mới không
         val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
-            if (ev == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch { try { Store.refreshIfRemoteChanged() } catch (e: Exception) { } }
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch { try { Store.flushUnsent() } catch (e: Exception) { }; try { Store.refreshIfRemoteChanged() } catch (e: Exception) { } }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
+    LaunchedEffect(Unit) {                                                      // thao tác chưa gửi được thì cứ 8 giây thử gửi lại (PC nhận gần như ngay khi có mạng)
+        while (true) {
+            delay(8_000)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) { try { Store.flushUnsent() } catch (e: Exception) { } }
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(90_000)
+            delay(30_000)
             if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) && !Store.viewerActive) {
                 try { Store.refreshIfRemoteChanged() } catch (e: Exception) { }
             }
