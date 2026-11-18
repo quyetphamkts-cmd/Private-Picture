@@ -448,3 +448,22 @@ def test_name_suggestion_published_and_cleared(lib, tmp_path):
     sync.run(db, dest, "pw", include_originals=False)
     assert db.one("SELECT name FROM persons WHERE id=?", (pids[0],))["name"] == "Lan Anh"
     assert not db.q("SELECT 1 FROM person_suggest WHERE person_id IN (?,?)", tuple(pids))
+
+
+def test_every_listed_person_has_images_on_phone(lib, tmp_path):
+    """Danh sách người trên PC và trên điện thoại phải khớp: người chỉ còn ảnh trùng đã ẩn (hoặc ảnh chưa có bản nhỏ) không được tính ở PC."""
+    import base64
+    pics, db = _setup(lib)
+    pid = db.persons()[0]["id"]
+    n0 = len(db.persons())
+    for r in db.person_images(pid):
+        db.x("INSERT OR IGNORE INTO dup_hidden(image_id) VALUES(?)", (r["id"],))
+    assert pid not in {p["id"] for p in db.persons()} and len(db.persons()) == n0 - 1
+    dest = str(tmp_path / "drive")
+    sync.run(db, dest, "pw", include_originals=False)
+    root = sync.root_of(dest)
+    j = json.load(open(os.path.join(root, "sync.json")))
+    key = secure.derive("pw", base64.b64decode(j["salt"]))
+    idx = json.loads(unseal(key, open(os.path.join(root, "index.pe"), "rb").read()))
+    linked = {p for _, p in idx["image_person"]}
+    assert all(p["id"] in linked for p in idx["persons"])

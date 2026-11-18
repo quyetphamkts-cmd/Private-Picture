@@ -236,6 +236,8 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
         for r in db.person_images(p["id"]):
             if r["id"] in uids:
                 link.append([uids[r["id"]], p["id"]])
+    linked = {pid for _, pid in link}
+    stats["persons_unlinked"] = sum(1 for p in persons if p["id"] not in linked)       # người có trên PC nhưng chưa có ảnh nào trong danh mục (ảnh chưa có bản nhỏ)
     labels = [{"id": l["id"], "name": l["name"]} for l in db.labels()]
     label_links = [[uids[x["image_id"]], x["label_id"]] for x in db.q("SELECT label_id,image_id FROM label_images") if x["image_id"] in uids]
     cloth = [[uids[r["image_id"]], r["grp"]] for r in db.q("SELECT image_id,grp FROM cloth_group WHERE grp IS NOT NULL") if r["image_id"] in uids]
