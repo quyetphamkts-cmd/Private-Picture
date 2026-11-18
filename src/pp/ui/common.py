@@ -262,6 +262,10 @@ class CardDelegate(QStyledItemDelegate):
         p.setBrush(QColor(0, 0, 0, 110))
         p.drawEllipse(hr)
         _draw_heart(p, QRectF(hr).adjusted(hr.width() * 0.22, hr.height() * 0.24, -hr.width() * 0.22, -hr.height() * 0.2), fav)
+        if (index.data(Qt.UserRole) or {}).get("pend"):                       # còn ảnh app đề xuất chưa xác nhận: viền vàng đồng quanh thẻ (giống điện thoại)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#A9793D"), 2.4))
+            p.drawRoundedRect(QRectF(tgt).adjusted(1.2, 1.2, -1.2, -1.2), rad, rad)
         p.restore()
 
 

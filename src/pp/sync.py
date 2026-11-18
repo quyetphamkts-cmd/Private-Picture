@@ -128,7 +128,7 @@ def publish_covers(db, root, key, uids, persons):
         name = f'{p["id"]}-{sig}.pe'
         path = os.path.join(d, name)
         if not os.path.exists(path):
-            b = cover.navel_bytes(c["thumb"], box, c["path"], 420, lambda iid=c["iid"], pth=c["path"]: read_original_any(db, {"id": iid, "path": pth}))
+            b = cover.navel_cached(db, c["fid"], c["thumb"], box, c["path"], 420, lambda iid=c["iid"], pth=c["path"]: read_original_any(db, {"id": iid, "path": pth}))
             if not b:
                 continue
             _write(path, seal(key, b))

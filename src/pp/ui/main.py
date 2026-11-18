@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
                 if not self.start_sync(quiet=True, on_done=check_update):
                     check_update()                                    # chưa cấu hình đồng bộ: kiểm tra cập nhật luôn
             for ms, fn in ((300, pull_first), (45000, check_update), (180000, start_scan),
-                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg), (150000, self.auto_bodies)):
+                           (12000, self.auto_backup), (20000, self.auto_sync), (30000, self.ensure_sync_setup), (90000, self.auto_refimg), (150000, self.auto_bodies), (210000, self.auto_cover_pool)):
                 t = QTimer(self)
                 t.setSingleShot(True)
                 t.timeout.connect(fn)
@@ -251,6 +251,17 @@ class MainWindow(QMainWindow):
         self._bdw = BodyWorker(db)
         self._bdw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
         self._bdw.start(QThread.LowPriority)
+
+    def auto_cover_pool(self):
+        """Khi máy rảnh (không quét, không đồng bộ): làm sẵn ảnh profile cho mọi người theo vòng; kiểm tra lại mỗi 30 phút."""
+        QTimer.singleShot(30 * 60 * 1000, self.auto_cover_pool)
+        sw = getattr(self, "_sw", None)
+        if self.busy() or (sw and sw.isRunning()) or (getattr(self, "_cpw", None) and self._cpw.isRunning()):
+            return
+        from .pages import CoverPoolWorker
+        self._cpw = CoverPoolWorker(self.ctx.db)
+        self._cpw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self._cpw.start(QThread.LowPriority)
 
     def ensure_sync_setup(self):
         """Đồng bộ điện thoại tự động chạy sau khi đã cấu hình; chưa cấu hình (lần đầu) thì tự mở hộp cài đặt một lần để chọn thư mục Drive và mật khẩu đồng bộ."""

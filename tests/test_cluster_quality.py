@@ -1193,3 +1193,47 @@ def test_reference_images_flag_wrong_name_and_suggest_name(tmp_path):
     assert db.one("SELECT name FROM person_candidates WHERE person_id=?", (U,))["name"] == "Bella Test"
     assert refimg.consistent([vec(a_id), vec(a_id), vec(b_id)]) == []                                 # chỉ 2/3 khớp nhau: chưa đủ đồng thuận
     assert len(refimg.consistent([vec(a_id) for _ in range(4)] + [vec(b_id)])) == 4                  # bỏ mặt lạc lõng
+
+
+def test_cover_pool_rounds_star_first(tmp_path, monkeypatch):
+    """Ảnh profile làm sẵn theo vòng (mỗi người 1 ảnh trước), ảnh đánh dấu sao được làm trước, chỉ lấy ảnh Naked một người nhìn thẳng."""
+    from PIL import Image
+    from pp import cover
+    db = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(cover, "_pool_dir", lambda: tmp_path)
+    jpg = str(tmp_path / "p.jpg")
+    Image.new("RGB", (400, 800), (120, 90, 70)).save(jpg)
+    lab = db.x("INSERT INTO labels(name) VALUES('Yêu thích')").lastrowid
+
+    def person(name):
+        return db.x("INSERT INTO persons(name) VALUES(?)", (name,)).lastrowid
+
+    def photo(pid, nude=True, star=False, faces=1):
+        iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (jpg + str(db.one("SELECT COUNT(*) c FROM images")["c"]), 1, 1, 400, 800, jpg)).lastrowid
+        fid = db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id) VALUES(?,?,?,?,?,?,?,?,?)", (iid, .35, .08, .18, .09, .97, 90, b"", pid)).lastrowid
+        for _ in range(faces - 1):
+            db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id) VALUES(?,?,?,?,?,?,?,?,NULL)", (iid, .1, .1, .1, .05, .9, 60, b""))
+        if nude:
+            db.x("INSERT INTO cloth_group(image_id,grp) VALUES(?,?)", (iid, "nude"))
+        if star:
+            db.x("INSERT INTO label_images(label_id,image_id) VALUES(?,?)", (lab, iid))
+        return iid, fid
+    a, b = person("A"), person("B")
+    _, a_plain = photo(a)
+    _, a_star = photo(a, star=True)
+    photo(a, nude=False)                      # không phải Naked: bỏ
+    photo(a, faces=2)                         # ảnh nhiều người: bỏ
+    _, b1 = photo(b)
+    cands = db.cover_candidates(a)
+    assert [c["fid"] for c in cands] == [a_star, a_plain]
+    seen = []
+    orig = cover.render_pool_item
+
+    def spy(db_, row, fetch=None):
+        seen.append(row["fid"])
+        return orig(db_, row, fetch)
+    monkeypatch.setattr(cover, "render_pool_item", spy)
+    assert cover.ensure_pool(db) == 3
+    assert seen[:2] == [a_star, b1] and seen[2] == a_plain                     # vòng 1: mỗi người một ảnh (sao trước); vòng 2: ảnh thứ hai
+    assert cover.pooled_bytes(db, a_star)[:2] == b"\xff\xd8"
+    assert cover.ensure_pool(db) == 0                                          # đã đủ: không làm lại

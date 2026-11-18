@@ -62,6 +62,8 @@ CREATE INDEX IF NOT EXISTS ix_ref_person ON person_ref(person_id);
 CREATE TABLE IF NOT EXISTS ref_state(person_id INTEGER PRIMARY KEY, ts REAL, n INTEGER, status TEXT);
 CREATE TABLE IF NOT EXISTS ref_flag(person_id INTEGER PRIMARY KEY, sim REAL, n INTEGER);
 CREATE TABLE IF NOT EXISTS person_candidates(person_id INTEGER, name TEXT, score REAL, PRIMARY KEY(person_id, name));
+CREATE TABLE IF NOT EXISTS cover_render(face_id INTEGER PRIMARY KEY, person_id INTEGER, file TEXT, tried INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_cover_render_p ON cover_render(person_id);
 CREATE TABLE IF NOT EXISTS cover_used(person_id INTEGER, kind TEXT, face_id INTEGER, PRIMARY KEY(person_id, kind, face_id));
 CREATE TABLE IF NOT EXISTS cloth_manual(image_id INTEGER PRIMARY KEY, grp TEXT);
 CREATE TABLE IF NOT EXISTS inbox_done(name TEXT PRIMARY KEY, ts REAL);             -- tên các tệp thao tác của điện thoại PC đã xử lý: đưa vào danh mục để điện thoại biết chắc thao tác nào đã được nhận
@@ -285,6 +287,30 @@ class DB:
                         FROM persons p WHERE p.id=?""", (pid,))
         return r["t"] if r else None
 
+    COVER_RANGE = {"thigh": (0.06, 0.17), "navel": (0.08, 0.23), "full": (0.05, 0.25)}
+
+    def cover_candidates(self, pid, kind="navel"):
+        """Mọi ảnh hợp lệ làm ảnh profile của một người, theo thứ tự ưu tiên: ảnh đã đánh dấu sao trước, rồi ảnh thường (mặt rõ, to hơn trước).
+        Điều kiện giữ nguyên: ảnh Naked chỉ một người, mặt nhìn thẳng (thấy trọn mặt), nằm trọn trong ảnh, còn đủ thân phía dưới."""
+        lo, hi = self.COVER_RANGE.get(kind, (0.08, 0.23))
+        need = 5.1 if kind == "thigh" else 3.1
+        rows = self.q("""SELECT f.id fid, f.x x, f.y y, f.w w, f.h h, i.w iw, i.h ih, i.thumb thumb, i.path path, i.id iid, f.score*f.px q,
+                                EXISTS(SELECT 1 FROM label_images li JOIN labels lb ON lb.id=li.label_id WHERE li.image_id=i.id AND lb.name='Yêu thích') star
+                         FROM faces f JOIN images i ON i.id=f.image_id
+                         LEFT JOIN cloth_manual m ON m.image_id=i.id LEFT JOIN cloth_group g ON g.image_id=i.id
+                         WHERE f.person_id=? AND f.score>=0.93 AND f.px>=48 AND f.h BETWEEN ? AND ? AND i.thumb IS NOT NULL
+                           AND f.y>=0.04 AND f.x>=0.02 AND f.x+f.w<=0.98
+                           AND (CASE WHEN m.image_id IS NOT NULL THEN m.grp ELSE g.grp END)='nude'
+                           AND (SELECT COUNT(*) FROM faces z WHERE z.image_id=i.id)=1
+                           AND i.id NOT IN (SELECT image_id FROM dup_hidden)""", (pid, lo, hi))
+        ok = []
+        for r in rows:
+            ratio = (r["w"] * (r["iw"] or 1)) / max(1.0, r["h"] * (r["ih"] or 1))
+            if 0.72 <= ratio <= 1.12 and r["y"] + need * r["h"] <= 1.0:
+                ok.append(r)
+        ok.sort(key=lambda r: (-int(r["star"]), -(r["q"] or 0)))
+        return ok
+
     def _cover_random(self, pid, kind, cols, lo, hi):
         """Ảnh đại diện đổi mỗi lần khởi động app, lấy từ nhóm Nude: ảnh chỉ có một người, đủ thân (đủ chỗ cắt từ giữa đùi / rốn lên), mặt nhìn thẳng (khung mặt gần vuông,
         điểm tin cậy cao, đủ lớn), mặt nằm trọn trong ảnh. Không lặp lại ảnh nào cho tới khi đã đi hết các ảnh hợp lệ của người đó (rồi mới vòng lại)."""
@@ -313,7 +339,10 @@ class DB:
         if not fresh:                                                # đã đi hết một vòng: bắt đầu vòng mới
             self.x("DELETE FROM cover_used WHERE person_id=? AND kind=?", (pid, kind))
             fresh = ok
-        r = random.choice(fresh)
+        starred = [r for r in fresh if self.one("SELECT 1 FROM label_images li JOIN labels lb ON lb.id=li.label_id WHERE li.image_id=? AND lb.name='Yêu thích'", (r["iid"],))]
+        done = {x["face_id"] for x in self.q("SELECT face_id FROM cover_render WHERE person_id=? AND file IS NOT NULL", (pid,))}
+        pool = starred or fresh                                      # ảnh đánh dấu sao được ưu tiên trước
+        r = random.choice([x for x in pool if x["fid"] in done] or pool)          # và ưu tiên ảnh đã được xử lý sẵn khi máy rảnh
         self.x("INSERT OR IGNORE INTO cover_used(person_id,kind,face_id) VALUES(?,?,?)", (pid, kind, r["fid"]))
         _SESSION_COVER[key] = r["fid"]
         return r
@@ -321,7 +350,7 @@ class DB:
     def cover_pick(self, pid, kind):
         """Chọn khuôn mặt/ảnh làm ảnh đại diện hoàn toàn TỰ ĐỘNG (không có chọn tay): lấy ảnh có khuôn mặt vừa phải
         (toàn thân: mặt nhỏ trong khung, thấy cả người; bán thân: mặt cỡ vừa) thay vì ảnh cận mặt. Trả về dòng (x,y,w,h,thumb,path) hoặc None."""
-        cols = "f.x x, f.y y, f.w w, f.h h, i.thumb thumb, i.path path, i.id iid"
+        cols = "f.x x, f.y y, f.w w, f.h h, i.thumb thumb, i.path path, i.id iid, f.id fid"
         lo, hi = {"thigh": (0.06, 0.17), "navel": (0.08, 0.23), "full": (0.05, 0.25)}.get(kind, (0.13, 0.40))
         if self.get_meta("cover_random", "1") == "1":
             r = self._cover_random(pid, kind, cols, lo, hi)

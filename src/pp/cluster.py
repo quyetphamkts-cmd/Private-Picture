@@ -1058,29 +1058,38 @@ def reconcile_named(db):
         return 0
     fixed = 0
 
-    def score(vec, pid, skip_idx=None):
-        rows, M = E[pid]
-        s = M @ vec
-        if skip_idx is not None:
-            s = np.delete(s, skip_idx)
-        return float(np.sort(s)[-5:].mean()) if len(s) else -1.0
+    def top5_mean(S):
+        """Trung bình 5 điểm giống nhất của từng hàng (hàng có ít hơn 5 cột hợp lệ thì lấy hết); -1 nếu không có cột nào. Tính cả ma trận một lần (nhanh, không giữ luồng giao diện)."""
+        if S.shape[1] == 0:
+            return np.full(S.shape[0], -1.0, np.float32)
+        t = -np.sort(-S, axis=1)[:, :5]
+        ok = t > -1e8
+        n = ok.sum(1)
+        return np.where(n > 0, np.where(ok, t, 0.0).sum(1) / np.maximum(n, 1), -1.0)
     for pid in pids:
         rows, M = E[pid]
-        for i, r in enumerate(rows):
-            if r["lsrc"] == "user":
+        idx = [i for i, r in enumerate(rows) if r["lsrc"] != "user"]
+        if not idx:
+            continue
+        Vp = M[idx]
+        S_own = Vp @ M.T
+        S_own[np.arange(len(idx)), idx] = -1e9                                   # bỏ chính nó
+        own = top5_mean(S_own)
+        best = np.full(len(idx), -1.0)
+        best_q = [None] * len(idx)
+        for q in pids:
+            if q == pid:
                 continue
-            v = M[i]
-            own = score(v, pid, i)
-            best_q, best = None, -1.0
-            for q in pids:
-                if q == pid:
-                    continue
-                sq = score(v, q)
-                if sq > best:
-                    best_q, best = q, sq
-            if best_q is not None and best >= NAMED_THR * k and best - own >= RECONCILE_MARGIN * k \
-                    and not db.one("SELECT 1 FROM faces WHERE image_id=? AND person_id=? AND id<>?", (r["image_id"], best_q, r["id"])):
-                db.c.execute("UPDATE faces SET person_id=? WHERE id=?", (best_q, r["id"]))
+            sq = top5_mean(Vp @ E[q][1].T)
+            better = sq > best
+            for j in np.nonzero(better)[0]:
+                best_q[j] = q
+            best = np.where(better, sq, best)
+        for j, i in enumerate(idx):
+            r = rows[i]
+            if best_q[j] is not None and best[j] >= NAMED_THR * k and best[j] - own[j] >= RECONCILE_MARGIN * k \
+                    and not db.one("SELECT 1 FROM faces WHERE image_id=? AND person_id=? AND id<>?", (r["image_id"], best_q[j], r["id"])):
+                db.c.execute("UPDATE faces SET person_id=? WHERE id=?", (best_q[j], r["id"]))
                 fixed += 1
     db.commit()
     return fixed
@@ -1464,23 +1473,30 @@ def reassign_faces(db, face_ids):
         return 0
     pids = list(pv)
     n = 0
-    for fid in face_ids:
-        f = db.one("SELECT id,image_id,vec,person_id FROM faces WHERE id=?", (fid,))
-        if not f or f["person_id"] is not None or len(f["vec"]) != dim * 4:
+    for c0 in range(0, len(face_ids), 500):                                  # theo lô: so cả lô mặt với từng người bằng phép nhân ma trận (nhanh gấp nhiều lần so với từng mặt một)
+        chunk = face_ids[c0:c0 + 500]
+        fs = [f for f in db.q(f"SELECT id,image_id,vec,person_id FROM faces WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+              if f["person_id"] is None and len(f["vec"]) == dim * 4]
+        if not fs:
             continue
-        v = _unit(blob_to_vec(f["vec"]).astype(np.float32))
-        rej = {r["person_id"] for r in db.q("SELECT person_id FROM face_reject WHERE face_id=?", (fid,))}
-        there = {r["person_id"] for r in db.q("SELECT person_id FROM faces WHERE image_id=? AND person_id IS NOT NULL", (f["image_id"],))}
-        sc = []
-        for pid in pids:
-            if pid in rej or pid in there:
-                continue
-            s = pv[pid][0] @ v
-            sc.append((float(np.sort(s)[-5:].mean()), pid))
-        sc.sort(reverse=True)
-        if sc and sc[0][0] >= NAMED_THR * k and (len(sc) == 1 or sc[0][0] - sc[1][0] >= NAMED_MARGIN * k):
-            db.c.execute("UPDATE faces SET person_id=? WHERE id=?", (sc[0][1], fid))
-            n += 1
+        V = _unit(np.stack([blob_to_vec(f["vec"]) for f in fs]).astype(np.float32))              # F x dim
+        SC = np.empty((len(fs), len(pids)), np.float32)
+        for j, pid in enumerate(pids):
+            S = pv[pid][0] @ V.T                                                             # mẫu của người x F
+            t = -np.sort(-S, axis=0)[:5]
+            SC[:, j] = t.mean(0)
+        qf = ",".join("?" * len(fs))
+        rej, there = {}, {}
+        for r in db.q(f"SELECT face_id, person_id FROM face_reject WHERE face_id IN ({qf})", [f["id"] for f in fs]):
+            rej.setdefault(r["face_id"], set()).add(r["person_id"])
+        for r in db.q(f"SELECT image_id, person_id FROM faces WHERE person_id IS NOT NULL AND image_id IN ({','.join('?' * len(fs))})", [f["image_id"] for f in fs]):
+            there.setdefault(r["image_id"], set()).add(r["person_id"])
+        for i, f in enumerate(fs):
+            skip = rej.get(f["id"], set()) | there.get(f["image_id"], set())
+            sc = sorted(((float(SC[i, j]), pid) for j, pid in enumerate(pids) if pid not in skip), reverse=True)[:2]
+            if sc and sc[0][0] >= NAMED_THR * k and (len(sc) == 1 or sc[0][0] - sc[1][0] >= NAMED_MARGIN * k):
+                db.c.execute("UPDATE faces SET person_id=? WHERE id=?", (sc[0][1], f["id"]))
+                n += 1
     db.commit()
     return n
 

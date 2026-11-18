@@ -1,5 +1,6 @@
 """Ảnh đại diện của người: chỉ gương mặt (khuôn mặt đã cắt sẵn) hoặc bán thân (cắt rộng hơn quanh khuôn mặt từ ảnh nhỏ của ảnh, tỉ lệ 3:4)."""
 import io
+import time
 import os
 
 from PIL import Image, ImageOps
@@ -109,3 +110,98 @@ def thigh_bytes(img_thumb_path, box, original=None, out_w=520, fetch=None):
 def navel_bytes(img_thumb_path, box, original=None, out_w=520, fetch=None):
     """JPEG ảnh từ rốn lên; dùng ảnh gốc nếu có để nét. None nếu không đọc được."""
     return _crop_bytes(img_thumb_path, original, box, navel_box, out_w, fetch)
+
+
+# ---------------------------------------------------------------- kho ảnh profile làm sẵn khi máy rảnh
+POOL_W = 640
+POOL_MAX = 40            # tối đa số ảnh làm sẵn cho mỗi người (đủ để đổi ảnh đại diện rất lâu mà không lặp)
+
+
+def _pool_dir():
+    from . import paths
+    return paths.sub("cover_pool")
+
+
+def pooled_bytes(db, fid, out_w=None):
+    """Ảnh profile đã làm sẵn của một khuôn mặt (None nếu chưa có). out_w nhỏ hơn bản đã lưu thì thu nhỏ lại."""
+    r = db.one("SELECT file FROM cover_render WHERE face_id=?", (fid,))
+    if not r or not r["file"]:
+        return None
+    try:
+        b = SEC.read_file(r["file"])
+    except OSError:
+        return None
+    if out_w and out_w < POOL_W:
+        try:
+            im = Image.open(io.BytesIO(b))
+            im = im.resize((out_w, int(im.height * out_w / im.width)), Image.LANCZOS)
+            o = io.BytesIO()
+            im.save(o, "JPEG", quality=92, subsampling=0)
+            return o.getvalue()
+        except Exception:
+            return None
+    return b
+
+
+def navel_cached(db, fid, img_thumb_path, box, original=None, out_w=520, fetch=None):
+    """Như navel_bytes nhưng dùng ảnh đã làm sẵn nếu có (không phải đọc lại ảnh gốc)."""
+    if fid is not None:
+        b = pooled_bytes(db, fid, out_w)
+        if b:
+            return b
+    return navel_bytes(img_thumb_path, box, original, out_w, fetch)
+
+
+def render_pool_item(db, row, fetch=None):
+    """Làm sẵn một ảnh profile (cắt từ rốn lên) và lưu mã hóa. Trả về True nếu thành công."""
+    box = (row["x"], row["y"], row["w"], row["h"])
+    b = navel_bytes(row["thumb"], box, row["path"], POOL_W, fetch)
+    if not b:
+        db.x("INSERT OR REPLACE INTO cover_render(face_id,person_id,file,tried) VALUES(?,?,NULL,1)", (row["fid"], row["person_id"]))
+        return False
+    path = str(_pool_dir() / f"{row['fid']}.jpg")
+    SEC.write_file(path, b)
+    db.x("INSERT OR REPLACE INTO cover_render(face_id,person_id,file,tried) VALUES(?,?,?,1)", (row["fid"], row["person_id"], path))
+    return True
+
+
+def ensure_pool(db, stop=lambda: False, pause=lambda: None, fetch_for=None):
+    """Khi máy rảnh: làm sẵn ảnh profile cho mọi người theo VÒNG: vòng 1 mỗi người một ảnh, vòng 2 thêm ảnh thứ hai, vòng 3 thêm ảnh thứ ba… cho tới hết ảnh hợp lệ
+    của từng người (tối đa POOL_MAX). Trong mỗi người, ảnh đánh dấu sao được làm trước, rồi tới các ảnh thường. Ảnh hợp lệ = Naked, một người, nhìn thẳng thấy trọn mặt.
+    Trả về số ảnh mới làm được."""
+    from . import paths
+    for r in db.q("SELECT face_id, file FROM cover_render WHERE face_id NOT IN (SELECT id FROM faces)"):       # dọn ảnh của mặt đã biến mất
+        if r["file"]:
+            try:
+                os.remove(r["file"])
+            except OSError:
+                pass
+        db.x("DELETE FROM cover_render WHERE face_id=?", (r["face_id"],))
+    todo = {}
+    for p in db.q("SELECT id FROM persons WHERE hidden=0"):
+        cands = [dict(c, person_id=p["id"]) for c in db.cover_candidates(p["id"], "navel")][:POOL_MAX]
+        have = {r["face_id"] for r in db.q("SELECT face_id FROM cover_render WHERE person_id=? AND tried=1", (p["id"],))}
+        done = sum(1 for c in cands if c["fid"] in have)
+        pending = [c for c in cands if c["fid"] not in have]
+        if pending:
+            todo[p["id"]] = [done, pending]
+    made = 0
+    while todo and not stop():
+        progressed = False
+        for pid in list(todo):
+            if stop():
+                break
+            done, pending = todo[pid]
+            if not pending:
+                del todo[pid]
+                continue
+            pause()
+            c = pending.pop(0)
+            fetch = fetch_for({"id": c["iid"], "path": c["path"]}) if fetch_for else None
+            if render_pool_item(db, c, fetch):
+                made += 1
+            progressed = True
+            time.sleep(0.05)
+        if not progressed:
+            break
+    return made

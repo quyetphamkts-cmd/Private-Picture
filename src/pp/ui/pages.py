@@ -1703,18 +1703,20 @@ class PeoplePage(Page):
             out = []
             for p in rows:
                 warn = p["id"] in refwarn
-                it = {"thumb": p["cover"], "pid": p["id"], "key": f"p{p['id']}{p['cover']}{p['favorite']}{warn}", "label": f"{'⚠ ' if warn else ''}{p['name'] or 'Chưa đặt tên'}\n{p['n']} ảnh",
+                it = {"thumb": p["cover"], "pid": p["id"], "key": f"p{p['id']}{p['cover']}{p['favorite']}{warn}{int(p['pend'] > 0)}", "label": f"{'⚠ ' if warn else ''}{p['name'] or 'Chưa đặt tên'}\n{p['n']} ảnh",
                       "tip": f"{p['name'] or 'Chưa đặt tên'} · {p['n']} ảnh · đã xác minh {round(100 * p['ver'] / max(1, p['n'] + p['pend']))}%" + ("\n⚠ Khuôn mặt trong nhóm khác xa ảnh tham chiếu trên internet của người này: nên kiểm tra lại tên" if warn else ""),
-                      "fav": bool(p["favorite"]), "unver": max(0.0, 1.0 - p["ver"] / max(1, p["n"] + p["pend"]))}       # ảnh app đề xuất mà chưa xác minh cũng tính là chưa hoàn thành
+                      "fav": bool(p["favorite"]), "pend": p["pend"] > 0, "unver": max(0.0, 1.0 - p["ver"] / max(1, p["n"] + p["pend"]))}       # ảnh app đề xuất mà chưa xác minh cũng tính là chưa hoàn thành
                 pick = self.ctx.db.cover_pick(p["id"], self._kind) if self._kind != "face" else None
                 if pick:                                                              # thẻ lớn: toàn thân (5–10/hàng), bán thân (15/hàng)
                     box = (pick["x"], pick["y"], pick["w"], pick["h"])
                     it.pop("thumb")
-                    fn = cover.thigh_bytes if self._kind == "thigh" else cover.navel_bytes
+                    fn = cover.thigh_bytes if self._kind == "thigh" else (lambda th, b, op, ow, fe, db=self.ctx.db, fid=pick["fid"]: cover.navel_cached(db, fid, th, b, op, ow, fe))      # ảnh đã làm sẵn khi máy rảnh thì dùng ngay
                     ow = COVER_W.get(self.cols(), 520)
                     it["key"] = f"p{p['id']}{self._kind}{ow}{pick['thumb']}{box}"
+                    ckey = it["key"]
+                    it["key"] += f"|{int(p['pend'] > 0)}{int(bool(p['favorite']))}"
                     fetch = (lambda row={"id": pick["iid"], "path": pick["path"]}: sync.read_original_any(self.ctx.db, row))
-                    it["tbytes"] = (lambda th=pick["thumb"], b=box, fn=fn, op=pick["path"], k=it["key"], ow=ow, fe=fetch: _cover_cached(k, fn, th, b, op, ow, fe))
+                    it["tbytes"] = (lambda th=pick["thumb"], b=box, fn=fn, op=pick["path"], k=ckey, ow=ow, fe=fetch: _cover_cached(k, fn, th, b, op, ow, fe))
                 out.append(it)
             return out
         sug = {r["person_id"]: r for r in self.ctx.db.q("SELECT person_id,name,n_arch FROM person_suggest")}
@@ -3045,6 +3047,29 @@ class BodyWorker(QThread):
                 n = cluster.ensure_bodies(self.db, eng, stop=lambda: self._stop)
                 if n and not self._stop:
                     cluster.calibrate_mashup(self.db)
+        except Exception:
+            pass
+        self.done.emit(n)
+
+
+class CoverPoolWorker(QThread):
+    """Chạy nền khi máy rảnh: làm sẵn ảnh profile cho mọi người theo vòng (mỗi người 1 ảnh, rồi 2, 3… tới hết), ảnh đánh dấu sao trước."""
+    done = Signal(int)
+
+    def __init__(self, db):
+        super().__init__()
+        self.db = db
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        n = 0
+        try:
+            from .. import cover as _cv
+            n = _cv.ensure_pool(self.db, lambda: self._stop, lambda: _scan_mod.wait_idle(lambda: self._stop, quiet=2.0, max_wait=10.0),
+                                lambda row: (lambda: sync.read_original_any(self.db, row)))
         except Exception:
             pass
         self.done.emit(n)
