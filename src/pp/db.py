@@ -257,9 +257,9 @@ class DB:
     def persons(self, hidden=0):
         return self.q("""SELECT p.id,p.name,p.hidden,COALESCE(p.favorite,0) favorite,
             (SELECT COUNT(*) FROM (SELECT image_id FROM faces WHERE person_id=p.id
-                                   UNION SELECT image_id FROM person_guess WHERE person_id=p.id AND state=2) WHERE image_id IN (SELECT id FROM images WHERE thumb IS NOT NULL) AND image_id NOT IN (SELECT image_id FROM dup_hidden)) n,
+                                   UNION SELECT image_id FROM person_guess WHERE person_id=p.id AND state=2)) n,
             (SELECT COUNT(*) FROM (SELECT image_id FROM faces WHERE person_id=p.id AND locked=1
-                                   UNION SELECT image_id FROM person_guess WHERE person_id=p.id AND state=2) WHERE image_id IN (SELECT id FROM images WHERE thumb IS NOT NULL) AND image_id NOT IN (SELECT image_id FROM dup_hidden)) ver,
+                                   UNION SELECT image_id FROM person_guess WHERE person_id=p.id AND state=2)) ver,
             (SELECT COUNT(*) FROM person_guess g WHERE g.person_id=p.id AND g.state=0
                 AND g.image_id NOT IN (SELECT image_id FROM faces WHERE person_id=p.id)) pend,
             COALESCE((SELECT thumb FROM faces WHERE id=p.cover_face AND person_id=p.id),
@@ -269,7 +269,7 @@ class DB:
                      (SELECT id FROM faces WHERE person_id=p.id ORDER BY locked DESC, score*px DESC LIMIT 1)))) cover_img,
             (SELECT x||','||y||','||w||','||h FROM faces WHERE id=COALESCE((SELECT id FROM faces WHERE id=p.cover_face AND person_id=p.id),
                      (SELECT id FROM faces WHERE person_id=p.id ORDER BY locked DESC, score*px DESC LIMIT 1))) cover_box
-            FROM persons p WHERE p.hidden=? AND EXISTS(SELECT 1 FROM faces f WHERE f.person_id=p.id AND f.image_id IN (SELECT id FROM images WHERE thumb IS NOT NULL) AND f.image_id NOT IN (SELECT image_id FROM dup_hidden))
+            FROM persons p WHERE p.hidden=? AND EXISTS(SELECT 1 FROM faces f WHERE f.person_id=p.id)
             ORDER BY (p.name IS NULL), n DESC""", (hidden,))
 
     def toggle_favorite(self, pid):
