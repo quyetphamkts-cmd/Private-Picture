@@ -199,6 +199,12 @@ def make_loader(ctx):
     return loader
 
 
+def _viewer_cloth(ctx, it):
+    """Nhóm trang phục hiện tại của ảnh (do người dùng chỉnh tay thì ưu tiên, không thì do máy phân loại): 'cloth', 'nude' hoặc None."""
+    r = ctx.db.one("SELECT grp FROM cloth_manual WHERE image_id=?", (it["id"],)) or ctx.db.one("SELECT grp FROM cloth_group WHERE image_id=?", (it["id"],))
+    return r["grp"] if r else None
+
+
 def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=False, pid=None):
     loader = make_loader(ctx)
     extra = [("Vị trí", "Mở vị trí ảnh này trong All để xem các ảnh gần nó", lambda it: ctx.locate.emit(it["id"]))]
@@ -209,7 +215,9 @@ def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=Fals
         extra.insert(0, ("Loại khỏi nhóm", "Ảnh này không đúng người: loại khỏi nhóm, app tự kiểm tra và xếp lại", drop))
     v = Viewer(items, index, loader, parent, model, on_index, lambda it: _viewer_info(ctx, it), lambda it, t: _viewer_fav(ctx, it, t),
                lambda it, vw: _viewer_menu(ctx, it, vw, cloth, pid), lambda href: ctx.open_person.emit(int(href.split(":")[1])), extra,
-               lambda it: _viewer_faces(ctx, it), lambda it, face, vw: _viewer_face_menu(ctx, it, face, vw))
+               lambda it: _viewer_faces(ctx, it), lambda it, face, vw: _viewer_face_menu(ctx, it, face, vw),
+               add=lambda it, vw: assign_dialog(ctx, vw, [it["id"]], pid),
+               cloth=(lambda it: _viewer_cloth(ctx, it), lambda it, code: (clothing.set_manual(ctx.db, [it["id"]], code), ctx.changed.emit())))
     v.showMaximized()
     return v
 
@@ -238,12 +246,20 @@ class Page(QWidget):
         pass
 
 
+from .floatbar import ClothPill, RoundBtn, SelBar, TextPill, TitlePill, draw_fat_star
+
+
 class PhotoGrid(QWidget):
     """Lưới ảnh có chuột phải: xem, mở thư mục, thêm vào nhãn, chuyển vào Kho riêng tư."""
 
-    def __init__(self, ctx, parent_page, text=False, extra_actions=None, viewer_marks=False):
+    selCountChanged = Signal(int)
+
+    def __init__(self, ctx, parent_page, text=False, extra_actions=None, viewer_marks=False, bar=True):
         super().__init__()
         self.ctx, self.page, self.extra = ctx, parent_page, extra_actions or []
+        self.legacy = False                          # hàng nút chữ cũ chỉ còn dùng khi chưa có thanh nút tròn
+        self.remove_fn = next((fn for n, fn in self.extra if n.startswith("Không phải người này")), None)
+        self.confirm_fn = next((fn for n, fn in self.extra if n.startswith("Đúng, thêm vào nhóm này")), None)
         self.viewer_marks = viewer_marks            # mở ảnh ra xem: Ctrl đánh dấu chọn, thoát ra các ảnh đã chọn vẫn được đánh dấu trong danh sách
         self.model = ThumbModel()
         self.grid = JustifiedView(self.model)
@@ -328,6 +344,10 @@ class PhotoGrid(QWidget):
         self.zoom_s.valueChanged.connect(self.grid.set_row_h)
         self.grid.rowHChanged.connect(lambda h: (self.zoom_s.blockSignals(True), self.zoom_s.setValue(h), self.zoom_s.blockSignals(False)))
         zr.addWidget(self.zoom_s)
+        self.zoomw.setVisible(False)
+        self.bar = SelBar(self) if bar else None
+        if self.bar is not None:
+            lay.addWidget(self.bar)
         lay.addWidget(self.zoomw)
         lay.addWidget(self.grid)
         self.grid.selectionChanged.connect(self._sel_changed)
@@ -415,10 +435,58 @@ class PhotoGrid(QWidget):
         return max(n, 0)
 
     def _sel_changed(self, n):
-        self.selbar.setVisible(self.grid.multi and n > 0)
-        if getattr(self, "sel_only", False):
-            self.zoomw.setVisible(self.selbar.isVisibleTo(self.zoomw))
+        self.selCountChanged.emit(n if self.grid.multi else 0)
         self.sellab.setText(f"Đã chọn {n} ảnh")
+
+    # --- giao diện cho thanh nút tròn (SelBar)
+    def sel_count(self):
+        return len(self.grid.sel) if self.grid.multi else 0
+
+    def clear_sel(self):
+        self.grid.clear_selection()
+
+    def run_remove(self):
+        if self.remove_fn:
+            self._run_extra(self.remove_fn)
+
+    def classify_selected(self, code):
+        """Đang chọn ảnh: bấm Dressed / Naked để phân loại luôn các ảnh đã chọn. Trả về True nếu đã xử lý (có ảnh được chọn)."""
+        ids = [x["id"] for x in self.selected()]
+        if not ids:
+            return False
+        clothing.set_manual(self.ctx.db, ids, code)
+        self.ctx.changed.emit()
+        return True
+
+    def fill_menu(self, m):
+        """Các lựa chọn trong nút ⋯: cỡ ảnh, mở rộng, thao tác trên ảnh đã chọn, chọn tất cả."""
+        from PySide6.QtWidgets import QWidgetAction
+        wa = QWidgetAction(m)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(12, 4, 12, 4)
+        h.addWidget(QLabel("Cỡ ảnh"))
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(90, 560)
+        sl.setValue(self.grid.row_h)
+        sl.setFixedWidth(150)
+        sl.valueChanged.connect(self.zoom_s.setValue)
+        h.addWidget(sl)
+        wa.setDefaultWidget(w)
+        m.addAction(wa)
+        m.addAction("⤢  Mở rộng toàn màn hình", lambda: self.expand())
+        sel = self.selected()
+        if sel:
+            m.addSeparator()
+            self._label_actions(m, sel)
+            sm = m.addMenu("Chọn ảnh tương tự")
+            for thr, t in ((0.90, "Rất giống"), (0.85, "Giống"), (0.80, "Khá giống")):
+                sm.addAction(t, lambda thr=thr: self.select_similar(thr))
+            if self.confirm_fn:
+                m.addAction("✓  Đúng, thêm vào nhóm này", lambda: self._run_extra(self.confirm_fn))
+        m.addSeparator()
+        m.addAction("Chọn tất cả", self.grid.select_all)
+        m.addAction("Bỏ chọn", self.grid.clear_selection)
 
     def _run_extra(self, fn):
         sel = self.selected()
@@ -672,63 +740,27 @@ class ChoiceBox(QComboBox):
         self.blockSignals(False)
 
 
-class ClothPill(QWidget):
-    """Ô dài gộp ba nút Dressed | Naked | All (như Android): rộng đúng ba hình tròn, ô đang chọn là hình tròn sáng màu vàng đồng; bấm lại ô đang chọn để về All.
-    Cùng giao diện với ChoiceBox (value, changed, set_options, pick) để thay thế trực tiếp."""
-    changed = Signal()
-    D = 40
+class OverlayHost(QWidget):
+    """Trang có nút nổi cố định ở giữa mép dưới (nút hình người báo ảnh đề xuất)."""
 
-    def __init__(self, tip=""):
+    def __init__(self):
         super().__init__()
-        self.value = None
-        self.setToolTip(tip)
-        self.setFixedSize(self.D * 3 + 2, self.D + 2)
-        self.btns = {}
-        from PySide6.QtCore import QSize
-        for k, key in enumerate(("cloth", "nude", None)):
-            b = QPushButton(self)
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setGeometry(1 + k * self.D, 1, self.D, self.D)
-            b.setStyleSheet(f"QPushButton{{border:none;border-radius:{self.D // 2}px;background:transparent;color:#FFFFFF;font-weight:700;padding:0}}"
-                            f"QPushButton:checked{{background:{theme.BRASS}}}")
-            if key is None:
-                b.setText("All")
-            else:
-                b.setIcon(theme.cloth_icon(key, int(self.D * 0.55)))
-                b.setIconSize(QSize(int(self.D * 0.55), int(self.D * 0.55)))
-                b.setToolTip({"cloth": "Dressed", "nude": "Naked"}[key])
-            b.clicked.connect(lambda _=False, kk=key: self._click(kk))
-            self.btns[key] = b
-        self._sync()
+        self._floaters = []
 
-    def paintEvent(self, e):
-        from PySide6.QtGui import QPainter, QColor, QPen
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor(0, 0, 0, 140))
-        p.setPen(QPen(QColor(255, 255, 255, 150), 1.5))
-        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), self.D / 2 + 1, self.D / 2 + 1)
-        p.end()
+    def add_bottom_center(self, w):
+        w.setParent(self)
+        self._floaters.append(w)
+        w.raise_()
+        self._place()
 
-    def _sync(self):
-        for key, b in self.btns.items():
-            b.setChecked(key == self.value)
+    def _place(self):
+        for w in self._floaters:
+            w.move((self.width() - w.width()) // 2, self.height() - w.height() - 18)
+            w.raise_()
 
-    def _click(self, key):
-        self.value = None if key == self.value else key
-        self._sync()
-        self.changed.emit()
-
-    def pick(self, key):
-        self.value = key if key in ("cloth", "nude") else None
-        self._sync()
-        self.changed.emit()
-
-    def set_options(self, options, total=None):
-        if self.value not in ("cloth", "nude"):
-            self.value = None
-        self._sync()
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place()
 
 
 class PillRow(QWidget):
@@ -898,8 +930,6 @@ class LibraryPage(Page):
         self.fbar = FilterBar([("y", "Năm"), ("p", "Người"), ("l", "Nhãn")])
         self.rows = self.fbar.slots
         self.fbar.changed.connect(self.refresh)
-        self.v.addWidget(self.fbar)
-        bar = QHBoxLayout()
         self.q = QLineEdit()
         self.q.setPlaceholderText("Lọc theo tên tệp, thư mục hoặc ngày (ví dụ 2024-05)…")
         self.q.textChanged.connect(self.refresh)
@@ -917,15 +947,25 @@ class LibraryPage(Page):
         self.hide_lab.toggled.connect(self.refresh)
         self.cloth = ClothPill("Lọc ảnh: Dressed / Naked / All")
         self.cloth.changed.connect(self.refresh)
-        bar.addWidget(self.cloth)
+        self.grid = PhotoGrid(ctx, self)
+        self.cloth.intercept = lambda key: self.grid.classify_selected(key)       # đang chọn ảnh: Dressed / Naked phân loại luôn các ảnh đã chọn
+        self.grid.bar.set_center(self.cloth)
+        self.panel = QWidget()                                   # bộ lọc và tìm kiếm: mặc định ẩn cho gọn, mở trong nút ⋯
+        pl = QVBoxLayout(self.panel)
+        pl.setContentsMargins(14, 0, 14, 4)
+        pl.addWidget(self.fbar)
+        bar = QHBoxLayout()
         bar.addWidget(self.q, 1)
         bar.addWidget(self.order_c)
         bar.addWidget(self.show_dup)
         bar.addWidget(self.hide_lab)
         bar.addWidget(self.count)
-        self.v.addLayout(bar)
-        self.grid = PhotoGrid(ctx, self)
+        pl.addLayout(bar)
+        self.panel.setVisible(False)
+        self.grid.layout().insertWidget(1, self.panel)
+        self.grid.bar.menu_extra = lambda m: (m.addAction("Bộ lọc và tìm kiếm…", lambda: self.panel.setVisible(not self.panel.isVisible())), m.addSeparator())
         self.v.addWidget(self.grid, 1)
+        self.v.setContentsMargins(0, 0, 0, 0)
 
     def show_image(self, iid):
         """Bỏ mọi bộ lọc rồi cuộn tới ảnh `iid` và chọn nó."""
@@ -1272,23 +1312,24 @@ class GroupedPhotos(QWidget):
     Có một thanh trượt chung để phóng to / thu nhỏ ảnh preview của mọi cụm."""
     GROUPS = [("cloth", "Dressed"), ("nude", "Naked"), ("unclear", "Chưa phân loại")]
 
-    def __init__(self, ctx, page, extra_actions=None):
+    selCountChanged = Signal(int)
+
+    def __init__(self, ctx, page, extra_actions=None, bar=True):
         super().__init__()
+        self.ctx, self.page = ctx, page
+        self.parts = {}
+        self.remove_fn = next((fn for n, fn in (extra_actions or []) if n.startswith("Không phải người này")), None)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        zr = QHBoxLayout()
-        zr.setContentsMargins(8, 0, 8, 0)
-        zr.addStretch(1)
-        zr.addWidget(QLabel("Cỡ ảnh"))
-        self.zoom_s = QSlider(Qt.Horizontal)
+        self.zoom_s = QSlider(Qt.Horizontal, self)               # cỡ ảnh chung của mọi cụm (chỉnh trong nút ⋯, Ctrl + cuộn chuột)
         self.zoom_s.setRange(90, 560)
         self.zoom_s.setValue(190)
-        self.zoom_s.setFixedWidth(170)
-        self.zoom_s.setToolTip("Phóng to / thu nhỏ ảnh preview (cũng dùng Ctrl + cuộn chuột). Space: xem nhanh ảnh lớn.")
         self.zoom_s.valueChanged.connect(self._zoom)
-        zr.addWidget(self.zoom_s)
-        outer.addLayout(zr)
+        self.zoom_s.hide()
+        self.bar = SelBar(self) if bar else None
+        if self.bar is not None:
+            outer.addWidget(self.bar)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -1301,12 +1342,9 @@ class GroupedPhotos(QWidget):
         for key, name in self.GROUPS:
             lab = QLabel()
             lab.setStyleSheet("font-weight:800;font-size:15px;color:#A9793D;padding:8px 2px 2px 2px;border-bottom:1px solid " + theme.RULE)
-            pg = PhotoGrid(ctx, page, extra_actions=extra_actions, viewer_marks=bool(extra_actions))
-            pg.sel_only = True                                   # cụm ảnh: chỉ hiện hàng nút thao tác khi có ảnh được chọn (thu phóng đã có thanh chung)
-            pg.expand_b.hide()
-            pg.zoom_lab.hide()
-            pg.zoom_s.hide()
-            pg.zoomw.setVisible(False)
+            pg = PhotoGrid(ctx, page, extra_actions=extra_actions, viewer_marks=bool(extra_actions), bar=False)
+            pg.sel_only = True                                   # cụm ảnh: thanh nút tròn là của cả trang (GroupedPhotos), không phải của từng cụm
+            pg.selCountChanged.connect(self._sel_changed)
             pg.grid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             pg.grid.outer = self.scroll
             pg.grid.rowHChanged.connect(self._grid_zoomed)
@@ -1318,6 +1356,57 @@ class GroupedPhotos(QWidget):
             pg.setVisible(False)
         lay.addStretch(1)
         self.scroll.setWidget(body)
+
+    # --- giao diện cho thanh nút tròn (SelBar): gộp ảnh đã chọn ở mọi cụm
+    def _sel_changed(self, _=0):
+        self.selCountChanged.emit(self.sel_count())
+
+    def sel_count(self):
+        return sum(pg.sel_count() for _, pg, _ in self.parts.values())
+
+    def selected(self):
+        out = []
+        for _, pg, _ in self.parts.values():
+            out += pg.selected() if pg.sel_count() else []
+        return out
+
+    def clear_sel(self):
+        for _, pg, _ in self.parts.values():
+            pg.clear_sel()
+
+    def add_to_person(self):
+        ids = [x["id"] for x in self.selected()]
+        if ids:
+            assign_dialog(self.ctx, self, ids, getattr(self.page, "pid", None) if isinstance(self.page, PeoplePage) else None)
+
+    def run_remove(self):
+        sel = self.selected()
+        if sel and self.remove_fn:
+            self.remove_fn(sel)
+
+    def fill_menu(self, m):
+        from PySide6.QtWidgets import QWidgetAction
+        wa = QWidgetAction(m)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(12, 4, 12, 4)
+        h.addWidget(QLabel("Cỡ ảnh"))
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(90, 560)
+        sl.setValue(self.zoom_s.value())
+        sl.setFixedWidth(150)
+        sl.valueChanged.connect(self.zoom_s.setValue)
+        h.addWidget(sl)
+        wa.setDefaultWidget(w)
+        m.addAction(wa)
+        sel = self.selected()
+        first = next((pg for _, pg, _ in self.parts.values() if pg.sel_count()), None)
+        if sel and first is not None:
+            m.addSeparator()
+            first._label_actions(m, sel)
+        m.addSeparator()
+        m.addAction("Chọn tất cả", lambda: [pg.grid.select_all() for _, pg, _ in self.parts.values() if not pg.isHidden()])
+        m.addAction("Bỏ chọn", self.clear_sel)
 
     def _zoom(self, h):
         for _, pg, _ in self.parts.values():
@@ -1359,40 +1448,33 @@ class ComboPage(Page):
 
     def __init__(self, ctx):
         super().__init__(ctx)
-        from PySide6.QtWidgets import QTabBar
-        self.by_count = {}
-        self.tabs = QTabBar()
-        self.tabs.setExpanding(False)
-        self.tabs.setDrawBase(False)
-        self.tabs.currentChanged.connect(self.show_tab)
-        self.v.addWidget(self.tabs)
-        self.head = QLabel()
-        self.head.setStyleSheet("color:" + theme.MUTED)
-        self.head.setWordWrap(True)
-        self.v.addWidget(self.head)
+        self.by_count, self.keys = {}, []
+        self.v.setContentsMargins(0, 0, 0, 0)
         self.grouped = GroupedPhotos(ctx, self)
+        self.pill = TextPill()                                   # ô dài "2 người | 3 người | 4 người" ở giữa thanh nút tròn (như điện thoại)
+        self.pill.currentChanged.connect(self.show_tab)
+        self.grouped.bar.set_center(self.pill)
+        self.head = QLabel()
+        self.head.setStyleSheet("color:" + theme.MUTED + ";padding:0 16px")
+        self.head.setWordWrap(True)
+        self.grouped.layout().insertWidget(1, self.head)
         self.v.addWidget(self.grouped, 1)
 
     def refresh(self):
         self.by_count = cluster.mashup_by_count(self.ctx.db)
         keys = sorted(self.by_count)
-        cur = self.tabs.tabData(self.tabs.currentIndex()) if self.tabs.count() else None
-        self.tabs.blockSignals(True)
-        while self.tabs.count():
-            self.tabs.removeTab(0)
-        for k in keys:
-            ix = self.tabs.addTab(f"{k} người ({len(self.by_count[k])})")
-            self.tabs.setTabData(ix, k)
-        self.tabs.blockSignals(False)
+        cur = self.keys[self.pill.cur] if self.keys and 0 <= self.pill.cur < len(self.keys) else None
+        self.keys = keys
+        self.pill.set_items([f"{k} người" for k in keys], keys.index(cur) if cur in keys else 0)
+        self.pill.setVisible(bool(keys))
         if keys:
-            self.tabs.setCurrentIndex(keys.index(cur) if cur in keys else 0)
-            self.show_tab(self.tabs.currentIndex())
+            self.show_tab(self.pill.cur)
         else:
             self.head.setText("Chưa có ảnh nào chụp chung từ 2 người trở lên.")
             self.grouped.set_groups({"cloth": [], "nude": [], "unclear": []})
 
     def show_tab(self, ix):
-        k = self.tabs.tabData(ix) if ix >= 0 else None
+        k = self.keys[ix] if 0 <= ix < len(self.keys) else None
         if k is None:
             return
         rows = [r for r in self.ctx.db.images_by_ids(self.by_count.get(k, [])) if r["thumb"]]
@@ -1528,41 +1610,30 @@ class PeoplePage(Page):
         self.split.setStretchFactor(0, 4)
         l.addWidget(self.split, 1)
         self.stack.addWidget(w)
-        # ảnh của một người
-        w2 = QWidget()
+        # ảnh của một người: thanh nút tròn (←, tên, Dressed | Naked | All, ⋯), lưới ảnh, nút hình người nhấp nháy nếu còn ảnh đề xuất
+        w2 = OverlayHost()
         l2 = QVBoxLayout(w2)
         l2.setContentsMargins(0, 0, 0, 0)
-        bar2 = QHBoxLayout()
-        back = QPushButton("← Quay lại")
-        back.clicked.connect(self.back)
-        self.pavatar = QLabel()
-        self.pavatar.setFixedSize(60, 60)
-        self.pname = QLabel()
-        ren = QPushButton("Đặt tên")
-        ren.clicked.connect(self.rename)
-        mrg = QPushButton("Gộp vào người khác…")
-        mrg.clicked.connect(self.merge)
-        hid = QPushButton("Ẩn người này")
-        hid.clicked.connect(self.hide)
-        for x in (back, self.pavatar, self.pname):
-            bar2.addWidget(x)
-        bar2.addStretch(1)
-        more = QPushButton("⋯")
-        more.setToolTip("Đặt tên, gộp vào người khác, ẩn người này")
-        mm = QMenu(more)
-        mm.addAction("Đặt tên…", self.rename)
-        mm.addAction("Gộp vào người khác…", self.merge)
-        mm.addAction("Ẩn người này", self.hide)
-        more.setMenu(mm)
-        xb = QPushButton("⤢")
-        xb.setToolTip("Mở rộng ảnh của người này ra toàn màn hình")
-        xb.clicked.connect(self.expand_main)
-        bar2.addWidget(xb)
-        bar2.addWidget(more)
-        l2.addLayout(bar2)
+        l2.setSpacing(0)
+        self.pavatar, self.pname = QLabel(), QLabel()              # (chỉ giữ để lưu tên / ảnh đại diện; hiển thị ở viên thuốc tên trên thanh nút)
+        self.pavatar.hide()
+        self.pname.hide()
+        self.pbar = SelBar(None, back=self.back)
+        self.cloth_row = ClothPill("Lọc ảnh của người này: Dressed / Naked / All")
+        self.cloth_row.changed.connect(self.show_person)
+        self.cloth_row.intercept = lambda key: self.cur_grid().classify_selected(key)       # đang chọn ảnh: bấm Dressed / Naked để phân loại luôn ảnh đã chọn
+        self.pbar.set_center(self.cloth_row)
+
+        def person_menu_items(m):
+            m.addAction("Đặt tên…", self.rename)
+            m.addAction("Gộp vào người khác…", self.merge)
+            m.addAction("Ẩn người này", self.hide)
+            m.addSeparator()
+        self.pbar.menu_extra = person_menu_items
+        l2.addWidget(self.pbar)
         self.sug_bar = QWidget()                                   # tên do app đoán: xem ảnh bên trong rồi mới xác nhận
         sbl = QHBoxLayout(self.sug_bar)
-        sbl.setContentsMargins(0, 2, 0, 2)
+        sbl.setContentsMargins(14, 2, 14, 2)
         self.sug_lab = QLabel()
         self.sug_lab.setWordWrap(True)
         self.sug_yes = QPushButton()
@@ -1579,7 +1650,7 @@ class PeoplePage(Page):
         l2.addWidget(self.sug_bar)
         self.undo_bar = QWidget()                                  # sau khi loại ảnh khỏi người: nút Hoàn tác (phòng bấm nhầm)
         ubl = QHBoxLayout(self.undo_bar)
-        ubl.setContentsMargins(0, 2, 0, 2)
+        ubl.setContentsMargins(14, 2, 14, 2)
         self.undo_lab = QLabel()
         ub = QPushButton("↶ Hoàn tác")
         ub.clicked.connect(self.undo_remove)
@@ -1592,45 +1663,39 @@ class PeoplePage(Page):
         self.undo_t.timeout.connect(lambda: self.undo_bar.setVisible(False))
         self._undo = None
         l2.addWidget(self.undo_bar)
-        self.cloth_row = ClothPill("Lọc ảnh của người này: Dressed / Naked / All")
-        self.cloth_row.changed.connect(self.show_person)
-        bar2.insertWidget(bar2.count() - 1, self.cloth_row)
-        self.photos = PhotoGrid(ctx, self, extra_actions=[("Không phải người này (gỡ khỏi nhóm)", self.remove_sel)], viewer_marks=True)
-        from PySide6.QtWidgets import QSplitter
-        self.psplit = QSplitter(Qt.Vertical)                       # kéo thanh chia để mở rộng vùng "có thể là người này" xem cho rõ
-        self.psplit.setChildrenCollapsible(False)
-        self.grouped = GroupedPhotos(ctx, self, extra_actions=[("Không phải người này (gỡ khỏi nhóm)", self.remove_sel)])
+        self.photos = PhotoGrid(ctx, self, extra_actions=[("Không phải người này (gỡ khỏi nhóm)", self.remove_sel)], viewer_marks=True, bar=False)
+        self.grouped = GroupedPhotos(ctx, self, extra_actions=[("Không phải người này (gỡ khỏi nhóm)", self.remove_sel)], bar=False)
         self.pstack = QStackedWidget()                            # Tất cả: chia cụm; chọn một nhóm trong ô lọc: lưới thường
         self.pstack.addWidget(self.grouped)
         self.pstack.addWidget(self.photos)
-        self.psplit.addWidget(self.pstack)
-        self.gbox = QWidget()
-        gl = QVBoxLayout(self.gbox)
-        gl.setContentsMargins(0, 6, 0, 0)
-        grow = QHBoxLayout()
-        self.glabel = QLabel()
-        self.glabel.setStyleSheet("font-weight:600;color:#A9793D")
-        ga = QPushButton("Thêm tất cả vào nhóm này")
-        ga.clicked.connect(lambda: self.accept_guess(None))
-        gx = QPushButton("⤢ Mở rộng toàn màn hình")
-        gx.setToolTip("Xem và chọn ảnh gợi ý trong cửa sổ lớn")
-        gx.clicked.connect(self.expand_guess)
-        grow.addWidget(self.glabel, 1)
-        grow.addWidget(gx)
-        grow.addWidget(ga)
-        gl.addLayout(grow)
-        gh = QLabel("Ảnh chụp người nhưng không thấy mặt: ứng dụng đoán theo bối cảnh, ánh sáng, trang phục, màu, chất ảnh và ngày giờ chụp. "
-                    "Chuột phải để xác nhận hoặc loại từng ảnh.")
-        gh.setWordWrap(True)
-        gh.setStyleSheet("color:" + theme.MUTED)
-        gl.addWidget(gh)
+        self.pstack.currentChanged.connect(lambda _: self.pbar.set_src(self.cur_grid()))
+        self.pbar.set_src(self.grouped)
+        l2.addWidget(self.pstack, 1)
+        self.sug_btn = RoundBtn("person", "Ảnh app chưa chắc là của người này: bấm để xem và xác nhận đúng / sai")      # nút hình người nhấp nháy: chỉ hiện khi còn ảnh đề xuất
+        self.sug_btn.clicked.connect(self.open_suggest)
+        w2.add_bottom_center(self.sug_btn)
+        self.sug_btn.hide()
+        for g in (self.grouped, self.photos):
+            g.selCountChanged.connect(lambda n: self.sug_btn.setVisible(n == 0 and self._n_guess > 0))
+        self._n_guess = 0
+        self.stack.addWidget(w2)
+        # trang ảnh đề xuất của một người: ← | Dressed | Naked | ✓ (xác nhận ảnh đã chọn)
+        w3 = QWidget()
+        l3 = QVBoxLayout(w3)
+        l3.setContentsMargins(0, 0, 0, 0)
+        l3.setSpacing(0)
         self.guess = PhotoGrid(ctx, self, extra_actions=[("Đúng, thêm vào nhóm này", self.accept_guess),
                                                           ("Không phải người này", self.reject_guess)], viewer_marks=True)
-        gl.addWidget(self.guess, 1)
-        self.psplit.addWidget(self.gbox)
-        self.psplit.setSizes([420, 300])
-        l2.addWidget(self.psplit, 1)
-        self.stack.addWidget(w2)
+        self.tick_pill = ClothPill("Dressed / Naked: phân loại ảnh đã chọn · ✓: xác nhận ảnh đã chọn là của người này", third="tick")
+        self.tick_pill.intercept = lambda key: self.guess.classify_selected(key)
+        self.tick_pill.tickClicked.connect(lambda: self.guess._run_extra(self.accept_guess))
+        self.guess.bar.set_center(self.tick_pill)
+        self.guess.bar.set_back(self.close_suggest)
+        self.glabel = QLabel()
+        self.glabel.setStyleSheet("font-weight:700;color:#A9793D;font-size:14px;padding:0 16px 4px 16px")
+        self.guess.layout().insertWidget(1, self.glabel)
+        l3.addWidget(self.guess, 1)
+        self.stack.addWidget(w3)
 
     def refresh(self):
         # mặt mới đủ rõ chưa thuộc nhóm nào (vừa quét thêm ảnh): gán nhanh cho người giống nhất; gom nhóm đầy đủ chạy sau mỗi lần quét.
@@ -1651,7 +1716,7 @@ class PeoplePage(Page):
                 self._busy = False
                 self._pend_seen = db.one("""SELECT COUNT(*) c FROM faces WHERE person_id IS NULL AND locked=0 AND px>=?
                                             AND id NOT IN (SELECT face_id FROM face_reject)""", (cluster.MIN_FACE_PX,))["c"]
-        if self.pid is not None and self.stack.currentIndex() == 1:
+        if self.pid is not None and self.stack.currentIndex() in (1, 2):
             self.show_person()                    # đang mở trang một người: chỉ làm mới trang đó; danh sách người dựng lại khi quay về (nhanh hơn nhiều)
             return
         ps = self.ctx.db.persons()
@@ -1909,6 +1974,16 @@ class PeoplePage(Page):
         self.ctx.db.x("DELETE FROM person_candidates WHERE person_id=?", (self.pid,))
         self.ctx.changed.emit()
 
+    def cur_grid(self):
+        """Nguồn ảnh đang hiện ở trang một người (lưới chia cụm hoặc lưới thường)."""
+        return self.pstack.currentWidget()
+
+    def open_suggest(self):
+        self.stack.setCurrentIndex(2)
+
+    def close_suggest(self):
+        self.stack.setCurrentIndex(1)
+
     def show_person(self):
         r = self.ctx.db.one("SELECT name FROM persons WHERE id=?", (self.pid,))
         if not r:
@@ -1933,6 +2008,7 @@ class PeoplePage(Page):
                 b.clicked.connect(lambda _=False, n=c["name"]: self.accept_candidate(n))
                 self.cand_box.addWidget(b)
         self.pname.setText(f"<span style='font-size:18px;font-weight:700'>{r['name'] or 'Chưa đặt tên'}</span>")
+        self._title = r["name"] or "Chưa đặt tên"
         cv_t = self.ctx.db.person_cover(self.pid)
         pm = QPixmap()
         if cv_t:
@@ -1940,21 +2016,20 @@ class PeoplePage(Page):
                 pm.loadFromData(SEC.read_file(cv_t))
             except Exception:
                 pass
+        circ = None
         if not pm.isNull():                                    # ảnh đại diện tròn như thẻ danh bạ
             from PySide6.QtGui import QPainter, QPainterPath
-            sq = pm.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            out = QPixmap(60, 60)
-            out.fill(Qt.transparent)
-            pt = QPainter(out)
+            sq = pm.scaled(36, 36, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            circ = QPixmap(36, 36)
+            circ.fill(Qt.transparent)
+            pt = QPainter(circ)
             pt.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
-            path.addEllipse(0, 0, 60, 60)
+            path.addEllipse(0, 0, 36, 36)
             pt.setClipPath(path)
-            pt.drawPixmap((60 - sq.width()) // 2, (60 - sq.height()) // 2, sq)
+            pt.drawPixmap((36 - sq.width()) // 2, (36 - sq.height()) // 2, sq)
             pt.end()
-            self.pavatar.setPixmap(out)
-        else:
-            self.pavatar.clear()
+        self.pbar.set_title(self._title, circ)
         imgs = self.ctx.db.person_images(self.pid)
         cc = clothing.group_counts(self.ctx.db, [x["id"] for x in imgs])
         self.cloth_row.blockSignals(True)
@@ -1977,10 +2052,12 @@ class PeoplePage(Page):
         else:
             self.pstack.setCurrentIndex(1)
         gs = self.ctx.db.person_guesses(self.pid)
-        self.gbox.setVisible(bool(gs))
-        self.glabel.setText(f"Có thể cũng là người này ({len(gs)} ảnh không thấy mặt)")
+        self._n_guess = len(gs)
+        self.sug_btn.set_badge(len(gs), blink=True)                  # nhấp nháy trên PC; hết ảnh đề xuất thì nút tự ẩn
+        self.sug_btn.setVisible(bool(gs) and self.cur_grid().sel_count() == 0)
+        self.glabel.setText(f"Có thể là {self._title}  ·  {len(gs)} ảnh app chưa chắc chắn")
         self.guess.set_items([img_item(x, {"cap_tag": f"khớp {int(x['score'] * 100)}%"}) for x in gs])
-        self.stack.setCurrentIndex(1)
+        self.stack.setCurrentIndex(2 if (self.stack.currentIndex() == 2 and gs) else 1)
 
     def back(self):
         self.pid = None
@@ -2395,20 +2472,23 @@ class SimilarPage(Page):
 class SearchPage(Page):
     def __init__(self, ctx):
         super().__init__(ctx)
-        self.v.addWidget(title("Tìm kiếm theo nội dung", "Gõ mô tả bằng tiếng Việt hoặc tiếng Anh (ví dụ: phía sau, bàn chân, biển, family photo). Bộ nhận dạng hiểu tiếng Anh tốt nhất; một số từ tiếng Việt thông dụng được dịch tự động."))
-        bar = QHBoxLayout()
+        self.v.setContentsMargins(0, 0, 0, 0)
         self.q = QLineEdit()
-        self.q.setPlaceholderText("Mô tả ảnh cần tìm…")
+        self.q.setPlaceholderText("Mô tả ảnh cần tìm (ví dụ: phía sau, bàn chân, biển, family photo)…")
+        self.q.setToolTip("Gõ mô tả bằng tiếng Việt hoặc tiếng Anh. Bộ nhận dạng hiểu tiếng Anh tốt nhất; một số từ tiếng Việt thông dụng được dịch tự động.")
+        self.q.setMinimumWidth(420)
+        self.q.setFixedHeight(RoundBtn.D)
+        self.q.setStyleSheet("QLineEdit{border-radius:22px;padding:0 16px;background:rgba(0,0,0,110);border:1.5px solid rgba(255,255,255,150)}")
         self.q.returnPressed.connect(self.run)
-        b = QPushButton("Tìm")
-        b.clicked.connect(self.run)
-        bar.addWidget(self.q, 1)
-        bar.addWidget(b)
-        self.v.addLayout(bar)
+        go = RoundBtn("enter", "Tìm")
+        go.clicked.connect(self.run)
+        panel = QWidget()                                         # từ khóa gợi ý và tùy chọn: mặc định ẩn cho gọn, mở trong nút ⋯
+        panel_l = QVBoxLayout(panel)
+        panel_l.setContentsMargins(14, 0, 14, 4)
         self.people_only = QCheckBox("Chỉ ảnh có người")
         self.people_only.setChecked(True)
         self.people_only.setToolTip("Bỏ qua ảnh phong cảnh, nội thất… khi tìm theo tư thế, dáng người, trang phục")
-        self.v.addWidget(self.people_only)
+        panel_l.addWidget(self.people_only)
         self.chips = {}                                           # từ khóa gợi ý theo nhóm (tư thế, dáng người, bộ phận, trang phục…): bấm để thêm / bỏ khỏi ô tìm
         for cat, items in vi.CATALOG.items():
             row = QHBoxLayout()
@@ -2435,11 +2515,23 @@ class SearchPage(Page):
             sc.setFixedHeight(40)
             sc.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             row.addWidget(sc, 1)
-            self.v.addLayout(row)
+            panel_l.addLayout(row)
+        panel.setVisible(False)
         self.info = QLabel()
-        self.v.addWidget(self.info)
+        self.info.setStyleSheet("padding:0 16px")
         self.grid = PhotoGrid(ctx, self)
+        holder = QWidget()
+        hh = QHBoxLayout(holder)
+        hh.setContentsMargins(0, 0, 0, 0)
+        hh.setSpacing(8)
+        hh.addWidget(self.q, 1)
+        hh.addWidget(go)
+        self.grid.bar.set_center(holder)
+        self.grid.layout().insertWidget(1, panel)
+        self.grid.layout().insertWidget(2, self.info)
+        self.grid.bar.menu_extra = lambda m: (m.addAction("Từ khóa gợi ý và tùy chọn…", lambda: panel.setVisible(not panel.isVisible())), m.addSeparator())
         self.v.addWidget(self.grid, 1)
+
 
     def toggle_word(self, word):
         words = [w.strip() for w in re.split(r"[,;+]", self.q.text()) if w.strip()]

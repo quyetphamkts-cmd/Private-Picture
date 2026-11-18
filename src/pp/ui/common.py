@@ -1292,8 +1292,9 @@ class Viewer(QDialog):
     indexChanged = Signal(int)
     _got = Signal(int, object)
 
-    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None):
+    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None, add=None, cloth=None):
         super().__init__(parent)
+        self.add_fn, self.cloth = add, cloth                  # add(item, viewer): thêm vào người · cloth=(lấy_nhóm(item), đặt_nhóm(item, mã)): phân loại Dressed / Naked ngay khi xem
         self.faces_fn, self.face_menu_fn = faces, face_menu     # faces(item) -> [{box,pid,name,fid}]; face_menu(item, face, viewer) -> menu cho mặt đó
         self.face_list = []
         self.marks = None                                   # tập chỉ số ảnh đánh dấu (dùng chung với lưới): Ctrl bật/tắt dấu chọn ảnh đang xem
@@ -1328,84 +1329,59 @@ class Viewer(QDialog):
         self.view.hovered.connect(self._hover_face)
         self.view.clickedAt.connect(self._click_face)
         self.view.viewport().installEventFilter(self)
-        # thanh trên (nằm đè lên ảnh, tự ẩn)
-        self.top = QWidget(self)
-        self.top.setStyleSheet("QWidget#vtop{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(0,0,0,170),stop:1 rgba(0,0,0,0))}")
+        # thanh trên: nút tròn nổi như điện thoại (✕, thêm vào người · Dressed | Naked · loại khỏi người, vị trí), tự ẩn khi xem toàn màn hình
+        from .floatbar import ClothPill, RoundBtn, TopBar
+        self.top = TopBar(self)
         self.top.setObjectName("vtop")
-        tl = QHBoxLayout(self.top)
-        tl.setContentsMargins(24, 14, 18, 22)
-        self.cap = QLabel()
-        self.cap.setStyleSheet("font-size:13px;background:transparent")
-        tl.addWidget(self.cap, 1)
-        self.zl = QLabel("100%")
-        self.zl.setStyleSheet("background:transparent")
-        self.zl.setMinimumWidth(52)
-        self.zl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        btn_css = ("QPushButton{background:rgba(22,19,15,.45);color:%s;border:1px solid rgba(246,241,230,.35);border-radius:3px;"
-                   "padding:5px 12px;font-weight:500}QPushButton:hover{background:%s;border-color:%s;color:#fff}" %
-                   (theme.LIGHT_TEXT, theme.BRASS, theme.BRASS))
-        icon_css = btn_css + "QPushButton:checked{background:rgba(169,121,61,.55);border-color:%s}" % theme.BRASS_LIGHT
-        self.zoom_b = QPushButton()
-        self.zoom_b.setIcon(tool_icon("wheel"))
-        self.zoom_b.setToolTip("Cuộn chuột giữa: thu phóng tại vị trí con trỏ.\nBấm nút này để giữ chuột trái và kéo lên/xuống cũng thu phóng.")
-        self.pan_b = QPushButton()
-        self.pan_b.setIcon(tool_icon("left"))
-        self.pan_b.setToolTip("Nhấn giữ chuột trái và kéo để di chuyển ảnh (kéo chuột phải hoặc giữ Space cũng được)")
-        for b in (self.zoom_b, self.pan_b):
+        self.cap = QLabel()                                   # (chân trang: tên ảnh)
+        self.zl = QLabel("100%")                              # (không còn hiện trên thanh; giữ để các hàm cũ không lỗi)
+        self.zoom_b, self.pan_b, self.full_b, self.info_b, self.star_b, self.play_b = (QPushButton() for _ in range(6))
+        for b in (self.zoom_b, self.pan_b, self.info_b):
             b.setCheckable(True)
-            b.setIconSize(QSize(26, 26))
-            b.setFixedSize(44, 36)
-            b.setStyleSheet(icon_css)
         self.pan_b.setChecked(True)
-        self.zoom_b.clicked.connect(lambda: self.set_mode("zoom"))
-        self.pan_b.clicked.connect(lambda: self.set_mode("pan"))
-        self.full_b = QPushButton()
-        self.full_b.setIcon(tool_icon("full"))
-        self.full_b.setIconSize(QSize(26, 26))
-        self.full_b.setFixedSize(44, 36)
-        self.full_b.setStyleSheet(btn_css)
-        self.full_b.setToolTip("Toàn màn hình: chỉ còn ảnh (F11 hoặc Esc để thoát)")
-        self.full_b.clicked.connect(self.toggle_fullscreen)
-        fit_b = QPushButton()
-        fit_b.setIcon(tool_icon("fit"))
-        fit_b.setIconSize(QSize(26, 26))
-        fit_b.setFixedSize(44, 36)
-        fit_b.setStyleSheet(btn_css)
-        fit_b.setToolTip("Vừa khung (0)")
-        fit_b.clicked.connect(self.view.fit)
-        one_b = QPushButton("1:1")
-        one_b.setStyleSheet(btn_css)
-        one_b.setFixedHeight(36)
-        one_b.setToolTip("Kích thước gốc 100% (1)")
-        one_b.clicked.connect(self.view.actual)
-        self.info_b, self.star_b, self.play_b = QPushButton(), QPushButton(), QPushButton()
-        for b, kind, tip, fn in ((self.info_b, "info", "Thông tin ảnh (I)", self.toggle_info), (self.star_b, "star", "Yêu thích (nhãn “Yêu thích”)", self.toggle_fav),
-                                 (self.play_b, "play", "Trình chiếu (Space không dùng; bấm nút này)", self.toggle_play)):
-            b.setIcon(tool_icon(kind))
-            b.setIconSize(QSize(26, 26))
-            b.setFixedSize(44, 36)
-            b.setStyleSheet(btn_css)
+        self.btn_close = RoundBtn("close", "Đóng (Esc)")
+        self.btn_close.clicked.connect(self.close)
+        self.btn_add = RoundBtn("person+", "Thêm ảnh này vào một người…")
+        self.btn_add.clicked.connect(lambda: self.add_fn(self.items[self.i], self) if self.add_fn else None)
+        self.btn_add.setVisible(add is not None)
+        self.top.left.addWidget(self.btn_close)
+        self.top.left.addWidget(self.btn_add)
+        self.cloth_pill = ClothPill("Phân loại ảnh đang xem: Dressed / Naked", third="none")
+        self.cloth_pill.intercept = self._classify
+        self.cloth_pill.setVisible(cloth is not None)
+        self.top.mid.addWidget(self.cloth_pill)
+        self.btn_rm = RoundBtn("person-", "Ảnh này không đúng người: loại khỏi nhóm")
+        self.btn_loc = RoundBtn("enter", "Mở vị trí ảnh này trong All")
+        self.btn_rm.hide()
+        self.btn_loc.hide()
+        for text, tip, fn in self.extra:                      # "Loại khỏi nhóm" -> nút người −; "Vị trí" -> nút ↵
+            b = self.btn_rm if text.startswith("Loại") else self.btn_loc
             b.setToolTip(tip)
-            b.clicked.connect(fn)
-        self.info_b.setCheckable(True)
-        self.info_b.setStyleSheet(icon_css)
-        self.star_b.setVisible(fav is not None)
-        self.info_b.setVisible(info is not None)
-        for text, tip, fn in self.extra:                      # nút thêm: "Loại khỏi nhóm", "Vị trí trong Tất cả ảnh"…
-            xb = QPushButton(text)
-            xb.setStyleSheet(btn_css)
-            xb.setFixedHeight(36)
-            xb.setToolTip(tip)
-            xb.clicked.connect(lambda _=False, fn=fn: (fn(self.items[self.i]), self._fill_info()))
-            tl.addWidget(xb)
-        for b in (self.play_b, self.star_b, self.info_b, self.zoom_b, self.pan_b, fit_b, one_b, self.full_b):
-            tl.addWidget(b)
-        tl.addWidget(self.zl)
-        close = QPushButton("✕")
-        close.setStyleSheet(btn_css)
-        close.setToolTip("Đóng (Esc)")
-        close.clicked.connect(self.close)
-        tl.addWidget(close)
+            b.clicked.connect(lambda _=False, fn=fn: (fn(self.items[self.i]), self._fill_info()))
+            b.show()
+        self.top.right.addWidget(self.btn_rm)
+        self.top.right.addWidget(self.btn_loc)
+        # chân trang: tên + thông tin ảnh (trái), ngôi sao mập + số thứ tự (phải), cùng một độ cao
+        self.foot = QWidget(self)
+        fl = QHBoxLayout(self.foot)
+        fl.setContentsMargins(18, 4, 18, 6)
+        self.foot_txt = QLabel()
+        self.foot_txt.setTextFormat(Qt.RichText)
+        self.foot_txt.setStyleSheet("background:transparent;font-size:13px")
+        self.foot_txt.setOpenExternalLinks(False)
+        self.foot_txt.linkActivated.connect(lambda h: self._go_person(h))
+        fl.addWidget(self.foot_txt, 1)
+        self.star_r = RoundBtn("star", "Yêu thích (nhãn “Yêu thích”)")
+        self.star_r.setFixedSize(38, 38)
+        self.star_r.clicked.connect(self.toggle_fav)
+        self.star_r.setVisible(fav is not None)
+        fl.addWidget(self.star_r)
+        self.cnt = QLabel()
+        self.cnt.setStyleSheet("background:transparent;font-size:15px;font-weight:700")
+        fl.addWidget(self.cnt)
+        self.foot.setStyleSheet("QWidget#vfoot{background:rgba(10,9,7,215)}")
+        self.foot.setObjectName("vfoot")
+        self.foot.setFixedHeight(58)
         self.view.zoomChanged.connect(lambda s: self.zl.setText(f"{round(s * 100)}%"))
         arrow_css = ("QPushButton{background:rgba(22,19,15,.45);color:%s;border:1px solid rgba(246,241,230,.35);border-radius:24px;"
                      "font-size:22px}QPushButton:hover{background:%s;border-color:%s}" % (theme.LIGHT_TEXT, theme.BRASS, theme.BRASS))
@@ -1463,7 +1439,9 @@ class Viewer(QDialog):
 
     # ---- thanh điều khiển tự ẩn ----
     def _layout_overlays(self):
-        self.top.setGeometry(0, 0, self.width(), 76)
+        self.top.setGeometry(0, 0, self.width(), self.top.height())
+        self.foot.setGeometry(0, (self.view.height() or self.height()) - self.foot.height(), self.width(), self.foot.height())
+        self.foot.raise_()
         self.mini.move(self.width() - self.mini.width() - 16 - (300 if self.panel.isVisible() else 0), 84)
         self.panel.setGeometry(self.width() - 300, 76, 300, max(120, (self.view.height() or self.height()) - 76))
         self.mini.raise_()
@@ -1472,6 +1450,7 @@ class Viewer(QDialog):
         self.prev_b.move(18, (h - 48) // 2)
         self.next_b.move(self.width() - 66, (h - 48) // 2)
         self.top.raise_()
+        self.foot.raise_()
         self.prev_b.raise_()
         self.next_b.raise_()
 
@@ -1491,13 +1470,14 @@ class Viewer(QDialog):
     def _show_controls(self):
         n = len(self.items)
         if self.fs:                      # toàn màn hình: chỉ còn ảnh; thanh công cụ chỉ hiện khi đưa chuột lên góc trên bên phải
-            for w in (self.prev_b, self.next_b, self.panel):
+            for w in (self.prev_b, self.next_b, self.panel, self.foot):
                 w.hide()
             pos = self.mapFromGlobal(QCursor.pos())
             corner = pos.y() <= 80 and pos.x() >= self.width() * 0.5
             self.top.setVisible(corner)
             return
         self.top.show()
+        self.foot.show()
         self.prev_b.setVisible(self.i > 0)
         self.next_b.setVisible(self.i < n - 1)
 
@@ -1618,7 +1598,15 @@ class Viewer(QDialog):
 
     def toggle_fav(self):
         if self.fav_fn:
-            self.star_b.setIcon(tool_icon("star_on" if self.fav_fn(self.items[self.i], True) else "star"))
+            self.star_r.set_on(self.fav_fn(self.items[self.i], True))
+
+    def _classify(self, key):
+        """Dressed / Naked: phân loại ảnh đang xem (không lọc). Trả về True = đã xử lý."""
+        if self.cloth:
+            self.cloth[1](self.items[self.i], key)
+            self.cloth_pill.value = key
+            self.cloth_pill._sync()
+        return True
 
     def toggle_play(self):
         if self.show_timer.isActive():
@@ -1808,6 +1796,10 @@ class Viewer(QDialog):
         mark = "&nbsp;&nbsp;<span style='color:#E5C07B'>✓ ĐÃ CHỌN</span>" if (self.marks is not None and self.i in self.marks) else \
                ("&nbsp;&nbsp;<span style='color:#9a927f'>Ctrl: chọn</span>" if self.marks is not None else "")
         self.cap.setText(f"<b>{name}</b>&nbsp;&nbsp;<span style='color:{theme.BRASS_LIGHT}'>{self.i + 1} / {n}</span>{mark}{err}")
+        tip = (it.get("tip", "") or "").splitlines()
+        sub = " · ".join(x for x in tip[1:] if x and "/" not in x and "\\" not in x)[:160]         # bỏ dòng đường dẫn: chỉ ngày, kích thước…
+        self.foot_txt.setText(f"<b>{name}</b>{mark}{err}<br><span style='color:#A8A190'>{sub}</span>")
+        self.cnt.setText(f"{self.i + 1} / {n}")
         if self.strip is not None:
             ix = self.strip.model().index(self.i)
             self.strip.setCurrentIndex(ix)
@@ -1817,7 +1809,11 @@ class Viewer(QDialog):
         self._sync_mini()
         self._fill_info()
         if self.fav_fn:
-            self.star_b.setIcon(tool_icon("star_on" if self.fav_fn(it, False) else "star"))
+            self.star_r.set_on(self.fav_fn(it, False))
+        if self.cloth:
+            g = self.cloth[0](it)
+            self.cloth_pill.value = g if g in ("cloth", "nude") else None
+            self.cloth_pill._sync()
         self._show_controls()
         self._prefetch()
         if self._first:

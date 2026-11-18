@@ -392,8 +392,10 @@ def test_rename_person_via_button_and_menu(tmp_path, monkeypatch):
     page.refresh()
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Nguyen Van A", True)))
     page.pid = pid
-    btn = next(b for b in page.findChildren(QPushButton) if b.text() == "⋯")
-    next(a for a in btn.menu().actions() if a.text().startswith("Đặt tên")).trigger()      # như khi người dùng chọn trong menu ⋯
+    from PySide6.QtWidgets import QMenu
+    m = QMenu()
+    page.pbar.menu_extra(m)                                                                  # các mục của nút ⋯ trên thanh nút tròn
+    next(a for a in m.actions() if a.text().startswith("Đặt tên")).trigger()
     assert ctx.db.one("SELECT name FROM persons WHERE id=?", (pid,))["name"] == "Nguyen Van A"
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Tran B", True)))
     page.rename(pid)                                                     # như khi chọn trong menu chuột phải
@@ -851,7 +853,8 @@ def test_selection_row_does_not_swallow_photo_area(tmp_path, monkeypatch):
     pg.grid.multi = True
     pg._sel_changed(3)
     QTest.qWait(100)
-    assert pg.zoomw.height() <= 90 and pg.grid.height() > 500                       # hàng thao tác chỉ cao một dòng, phần còn lại dành cho ảnh
+    assert pg.bar.height() <= 70 and pg.grid.height() > 500                         # thanh nút tròn chỉ cao một hàng, phần còn lại dành cho ảnh
+    assert pg.bar.btn_close.isVisibleTo(pg.bar) and pg.bar.btn_add.isVisibleTo(pg.bar)       # đang chọn ảnh: có ✕ và thêm vào người
 
 
 def test_scan_pauses_while_user_in_main_sections(tmp_path, monkeypatch):
@@ -901,11 +904,11 @@ def test_mashup_tabs_by_number_of_people_split_dressed_nude(tmp_path, monkeypatc
         photo(f"t{n}", [0, 1, 2], "nude")                              # 2 ảnh 3 người
     page = ComboPage(ctx)
     page.refresh()
-    assert [page.tabs.tabText(i) for i in range(page.tabs.count())] == ["2 người (3)", "3 người (2)"]
+    assert [b.text() for b in page.pill.btns] == ["2 người", "3 người"]
     assert [(k, len(v)) for k, v in sorted(page.by_count.items())] == [(2, 3), (3, 2)]
     parts = {k: pg.model.rowCount() for k, (lab, pg, _) in page.grouped.parts.items()}
     assert parts["cloth"] == 2 and parts["nude"] == 1                    # tab 2 người: chia Dressed / Nude
-    page.tabs.setCurrentIndex(1)
+    page.pill.select(1)
     assert page.grouped.parts["nude"][1].model.rowCount() == 2
 
 
