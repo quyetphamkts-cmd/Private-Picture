@@ -3167,7 +3167,7 @@ class ArchiveCleanWorker(QThread):
                 if self._stop:
                     break
                 self.progress.emit(k, len(cands), os.path.basename(arch))
-                n = sync.clean_archive(self.db, self.dest, self.password, arch, items, self.zip_pw)
+                n = sync.clean_archive(self.db, self.dest, self.password, arch, items, self.zip_pw, st["why"])
                 if n:
                     imgs += n
                     arcs += 1
@@ -3338,7 +3338,8 @@ class SyncDialog(QDialog):
             f"Ảnh gốc mã hóa: {s['orig'][0]} tệp, {self.fmt(s['orig'][1])} · Ảnh nhỏ: {s['thumbs'][0]} tệp, {self.fmt(s['thumbs'][1])} · "
             f"Khác (danh mục, vectơ nội dung, app Android): {self.fmt(s['other'] + s['app'][1] + s['inbox'][1])}<br>"
             f"Ảnh gốc mã hóa chỉ nặng hơn ảnh gốc khoảng 32 byte mỗi ảnh (giải mã ra đúng từng byte). "
-            f"Ảnh gốc trong thư viện trên PC: {local['c']} tệp, {self.fmt(local['n'])}. Đã giải phóng khỏi PC: {arch} ảnh.")
+            f"Ảnh gốc trong thư viện trên PC: {local['c']} tệp, {self.fmt(local['n'])}. Đã giải phóng khỏi PC: {arch} ảnh."
+            + (f"<br><b>Lần giải phóng gần nhất:</b> {db.get_meta('free_report')}" if db.get_meta("free_report") else ""))
 
     def show_recovery(self):
         from .. import sync

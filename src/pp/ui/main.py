@@ -349,13 +349,16 @@ class MainWindow(QMainWindow):
             if not st:
                 return
             n_loose, n_arch = st.get("files", 0), st.get("arch_imgs", 0)
+            names = {"rar": "ảnh trong tệp .rar / định dạng không xóa bớt được", "ro": "ảnh trong tệp chỉ đọc", "ml": "ảnh chưa phân tích xong", "sync": "ảnh chưa có bản mã hóa trên Drive",
+                     "age": "ảnh chưa đủ 30 phút sau khi đồng bộ", "bad": "ảnh không đọc được hoặc không khớp bản trên Drive (cần mật khẩu tệp nén?)", "nodel": "ảnh không xóa được khỏi tệp nén (tệp đang mở?)"}
+            parts = [f"{v} {names[k]}" for k, v in (st.get("why") or {}).items() if v and k in names]
+            rep = time.strftime("%d/%m %H:%M") + f": đã giải phóng {n_loose} ảnh rời, {n_arch} ảnh trong tệp nén" + (". Chưa giải phóng: " + "; ".join(parts) if parts else "")
+            self.ctx.db.set_meta("free_report", rep)
             if n_loose or n_arch:
                 self.ctx.db.snapshot()
                 self.ctx.scan_status.emit(f"Đã giải phóng PC: {n_loose} ảnh rời, {n_arch} ảnh trong tệp nén")
                 self.ctx.changed.emit()
                 return
-            names = {"rar": "ảnh trong tệp .rar/định dạng không xóa bớt được", "ro": "ảnh trong tệp chỉ đọc", "ml": "ảnh chưa phân tích xong", "sync": "ảnh chưa có bản mã hóa trên Drive", "age": "ảnh chưa đủ 30 phút sau khi đồng bộ"}
-            parts = [f"{v} {names[k]}" for k, v in (st.get("why") or {}).items() if v and k in names]
             if parts:
                 self.ctx.scan_status.emit("Chưa giải phóng được: " + "; ".join(parts))
         self._cw.done.connect(finished)

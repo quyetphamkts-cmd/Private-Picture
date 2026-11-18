@@ -591,29 +591,40 @@ def archive_clean_candidates(db, dest, min_age=1800, why=None):
     return out
 
 
-def clean_archive(db, dest, password, arch, items, zip_pw=None):
-    """Kiểm chứng từng ảnh trong tệp nén giống HỆT bản mã hóa trên Drive (so từng byte), rồi xóa các ảnh đó khỏi tệp nén, giữ tệp nén (rỗng) cùng tên.
-    Ảnh được ghi nhận 'archived' nên vẫn xem, khôi phục được từ Drive. Trả về số ảnh đã dọn (0 nếu không làm được)."""
+def clean_archive(db, dest, password, arch, items, zip_pw=None, why=None):
+    """Kiểm chứng từng ảnh trong tệp nén giống HỆT bản mã hóa trên Drive (so từng byte), rồi xóa các ảnh ĐÃ KIỂM CHỨNG khỏi tệp nén, giữ tệp nén (rỗng) cùng tên.
+    Ảnh nào đọc không được hoặc không khớp thì bỏ riêng (không chặn cả tệp nén) và được đếm vào why['bad']. Ảnh được ghi nhận 'archived' nên vẫn xem,
+    khôi phục được từ Drive. Trả về số ảnh đã dọn (0 nếu không làm được)."""
     import hashlib
     key = setup(dest, password)
     pw = (zip_pw or {}).get(arch)
+    ok = []
     for iid, u, entry in items:
         try:
             local = zipimg.read(zipimg.make(arch, entry), pw)
             remote = unseal(key, open(os.path.join(root_of(dest), "orig", u + ".pe"), "rb").read())
         except Exception:
-            return 0
+            if why is not None:
+                why["bad"] = why.get("bad", 0) + 1
+            continue
         if hashlib.sha256(local).digest() != hashlib.sha256(remote).digest():
-            return 0
-    for iid, u, _ in items:
+            if why is not None:
+                why["bad"] = why.get("bad", 0) + 1
+            continue
+        ok.append((iid, u, entry))
+    if not ok:
+        return 0
+    for iid, u, _ in ok:
         db.c.execute("INSERT OR REPLACE INTO archived(image_id,uid) VALUES(?,?)", (iid, u))       # ghi nhận trước khi xóa
     db.commit()
-    if not zipimg.delete_entries(arch, [e for _, _, e in items], pw):
-        for iid, _, _ in items:
+    if not zipimg.delete_entries(arch, [e for _, _, e in ok], pw):
+        for iid, _, _ in ok:
             db.c.execute("DELETE FROM archived WHERE image_id=?", (iid,))
         db.commit()
+        if why is not None:
+            why["nodel"] = why.get("nodel", 0) + len(ok)
         return 0
-    return len(items)
+    return len(ok)
 
 
 def restore(db, ids, out_dir=None):
