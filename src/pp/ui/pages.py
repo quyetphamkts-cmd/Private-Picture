@@ -1180,7 +1180,7 @@ def cover_kind(cols):
 
 
 class LetterTabs(QScrollArea):
-    """Hàng tab chữ cái A–Z phía trên danh sách người: chữ đang xem sáng lên, bấm một chữ để nhảy tới mục đó; chữ chưa có ai thì mờ đi."""
+    """Hàng tab chữ cái A–Z phía trên danh sách người: chữ đang xem sáng lên, bấm một chữ để nhảy tới mục đó; chữ chưa có ai thì ẩn hẳn."""
     picked = Signal(str)
     LETTERS = ["♥", "All"] + [chr(c) for c in range(65, 91)] + ["#"]          # All: hiện đủ mọi tên theo bảng chữ cái; chọn một chữ thì chỉ hiện tên bắt đầu bằng chữ đó
 
@@ -1214,6 +1214,7 @@ class LetterTabs(QScrollArea):
         for ch, b in self.btns.items():
             n = counts.get(ch, 0)
             b.setEnabled(n > 0)
+            b.setVisible(n > 0 or ch in ("♥", "All"))                       # chữ cái chưa có ai thì ẩn hẳn, có người mới hiện ra
             b.setToolTip(f"{n} người" if n else "Không có")
 
     def set_current(self, ch):
