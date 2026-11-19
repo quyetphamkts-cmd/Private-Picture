@@ -1770,12 +1770,24 @@ fun SettingsScreen() {
         Text("Phiên bản: $ver", color = Color.Gray)
         Text("Dữ liệu từ máy tính được cập nhật tự động.", color = Color.Gray)
         var latest by remember { mutableStateOf<Pair<String, String>?>(null) }
-        LaunchedEffect(Unit) { latest = Store.latestOnGithub() }
+        var checked by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { latest = Store.latestOnGithub(); checked = true }
         val lt = latest
         val isNew = lt != null && Store.isNewer(lt.first, ver)
-        Text(if (lt == null) "Bản mới nhất: đang kiểm tra…" else if (isNew) "Có bản mới ${lt.first} (đang dùng $ver)" else "Bạn đang dùng bản mới nhất ($ver)", color = if (isNew) Color(0xFFE5C07B) else Color.Gray)
         val openLink = { url: String -> try { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { } }
-        Button({ openLink(lt?.second ?: "https://github.com/quyetphamkts-cmd/Private-Picture/releases/download/android-latest/PrivatePicture-Android.apk") }) { Text("Tải bản mới nhất" + (if (lt != null) " (${lt.first})" else "")) }
+        // chỉ sáng và cho tải khi CÓ bản mới; đã dùng bản mới nhất thì chỉ hiện dòng thông báo
+        when {
+            !checked -> Text("Đang kiểm tra bản mới…", color = Color.Gray)
+            lt == null -> {
+                Text("Không kiểm tra được bản mới (cần mạng).", color = Color.Gray)
+                Button({ openLink("https://github.com/quyetphamkts-cmd/Private-Picture/releases/download/android-latest/PrivatePicture-Android.apk") }, enabled = false) { Text("Tải bản mới nhất") }
+            }
+            isNew -> {
+                Text("Có bản mới ${lt.first} (đang dùng $ver)", color = Color(0xFFE5C07B))
+                Button({ openLink(lt.second) }) { Text("Tải bản ${lt.first}") }
+            }
+            else -> Text("Bạn đang dùng phiên bản mới nhất ($ver)", color = Color.Gray)
+        }
         val v = Store.version
         val upd = Store.indexUpdatedMs
         Text("Danh mục từ máy tính tạo lúc: " + (if (upd > 0) java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(upd)) else "chưa có"), color = Color.Gray)
