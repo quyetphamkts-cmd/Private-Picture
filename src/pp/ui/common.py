@@ -1292,7 +1292,7 @@ class Viewer(QDialog):
     indexChanged = Signal(int)
     _got = Signal(int, object)
 
-    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None, add=None, cloth=None):
+    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None, add=None, cloth=None, confirm=None):
         super().__init__(parent)
         self.add_fn, self.cloth = add, cloth                  # add(item, viewer): thêm vào người · cloth=(lấy_nhóm(item), đặt_nhóm(item, mã)): phân loại Dressed / Naked ngay khi xem
         self.faces_fn, self.face_menu_fn = faces, face_menu     # faces(item) -> [{box,pid,name,fid}]; face_menu(item, face, viewer) -> menu cho mặt đó
@@ -1346,9 +1346,12 @@ class Viewer(QDialog):
         self.btn_add.setVisible(add is not None)
         self.top.left.addWidget(self.btn_close)
         self.top.left.addWidget(self.btn_add)
-        self.cloth_pill = ClothPill("Phân loại ảnh đang xem: Dressed / Naked", third="none")
+        self.confirm_fn = confirm                             # xem từ trang ảnh đề xuất: ô thứ ba là dấu ✓ xác nhận đúng người
+        self.cloth_pill = ClothPill("Dressed / Naked: phân loại ảnh đang xem" + (" · ✓: xác nhận đúng người này" if confirm else ""), third="tick" if confirm else "none")
         self.cloth_pill.intercept = self._classify
-        self.cloth_pill.setVisible(cloth is not None)
+        self.cloth_pill.setVisible(cloth is not None or confirm is not None)
+        if confirm:
+            self.cloth_pill.tickClicked.connect(self._confirm)
         self.top.mid.addWidget(self.cloth_pill)
         self.btn_rm = RoundBtn("person-", "Ảnh này không đúng người: loại khỏi nhóm")
         self.btn_loc = RoundBtn("enter", "Mở vị trí ảnh này trong All")
@@ -1599,6 +1602,17 @@ class Viewer(QDialog):
     def toggle_fav(self):
         if self.fav_fn:
             self.star_r.set_on(self.fav_fn(self.items[self.i], True))
+
+    def _confirm(self):
+        """✓ ở trang ảnh đề xuất: xác nhận ảnh đang xem đúng là của người này rồi sang ảnh kế (hết ảnh thì đóng)."""
+        if not self.confirm_fn:
+            return
+        it = self.items[self.i]
+        self.confirm_fn(it)
+        if self.i < len(self.items) - 1:
+            self.go(1)
+        else:
+            self.close()
 
     def _classify(self, key):
         """Dressed / Naked: phân loại ảnh đang xem (không lọc). Trả về True = đã xử lý."""

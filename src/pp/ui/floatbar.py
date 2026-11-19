@@ -349,6 +349,7 @@ class ClothPill(QWidget):
             if key is None:
                 if third == "tick":
                     b.setText("✓")
+                    b.setStyleSheet(b.styleSheet() + "QPushButton{font-size:20px}")
                     b.setToolTip("Xác nhận các ảnh đã chọn là của người này")
                 else:
                     b.setText("All")
@@ -370,7 +371,7 @@ class ClothPill(QWidget):
 
     def _sync(self):
         for key, b in self.btns.items():
-            b.setChecked(key == self.value)
+            b.setChecked(key == self.value and not (key is None and self.third == "tick"))       # ô ✓ chỉ là nút bấm, không bao giờ ở trạng thái đang chọn
 
     def _click(self, key):
         if key is None and self.third == "tick":

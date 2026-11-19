@@ -205,11 +205,14 @@ def _viewer_cloth(ctx, it):
     return r["grp"] if r else None
 
 
-def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=False, pid=None):
+def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=False, pid=None, confirm=None, reject=None):
     loader = make_loader(ctx)
     extra = [("Vị trí", "Mở vị trí ảnh này trong All để xem các ảnh gần nó", lambda it: ctx.locate.emit(it["id"]))]
     if pid is not None:                                       # đang xem ảnh trong nhóm của một người: có nút loại khỏi nhóm
         def drop(it):
+            if reject is not None:                            # xem từ trang ảnh đề xuất: "không phải người này" = bỏ đề xuất
+                reject(it)
+                return
             cluster.remove_from_person(ctx.db, pid, [it["id"]])
             ctx.changed.emit()
         extra.insert(0, ("Loại khỏi nhóm", "Ảnh này không đúng người: loại khỏi nhóm, app tự kiểm tra và xếp lại", drop))
@@ -217,7 +220,8 @@ def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=Fals
                lambda it, vw: _viewer_menu(ctx, it, vw, cloth, pid), lambda href: ctx.open_person.emit(int(href.split(":")[1])), extra,
                lambda it: _viewer_faces(ctx, it), lambda it, face, vw: _viewer_face_menu(ctx, it, face, vw),
                add=lambda it, vw: assign_dialog(ctx, vw, [it["id"]], pid),
-               cloth=(lambda it: _viewer_cloth(ctx, it), lambda it, code: (clothing.set_manual(ctx.db, [it["id"]], code), ctx.changed.emit())))
+               cloth=(lambda it: _viewer_cloth(ctx, it), lambda it, code: (clothing.set_manual(ctx.db, [it["id"]], code), ctx.changed.emit())),
+               confirm=confirm)
     v.showMaximized()
     return v
 
@@ -362,7 +366,9 @@ class PhotoGrid(QWidget):
             self.grid.selectionChanged.emit(0)
             self.grid.viewport().update()
         v = open_viewer(self.window(), self.model.items, i.row(), self.ctx, self.model, None if self.viewer_marks else self.grid.reveal,
-                        isinstance(pg, PeoplePage), getattr(pg, "pid", None) if isinstance(pg, PeoplePage) else None)
+                        isinstance(pg, PeoplePage), getattr(pg, "pid", None) if isinstance(pg, PeoplePage) else None,
+                        confirm=(lambda it: self.confirm_fn([it])) if self.confirm_fn else None,
+                        reject=(lambda it: self.remove_fn([it])) if (self.confirm_fn and self.remove_fn) else None)
         v.finished.connect(lambda _=0, vw=v: self.grid.show_item(vw.i))        # thoát xem ảnh: danh sách cuộn tới ảnh vừa xem, không mất dấu
         if self.viewer_marks:
             v.marks = self.grid.sel
