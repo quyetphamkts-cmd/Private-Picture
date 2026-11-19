@@ -24,9 +24,9 @@ PAGES = [("library", "All", LibraryPage), ("people", "Người", PeoplePage), ("
          ("vault", "Kho mã hóa", VaultPage),
          ("settings", "Cài đặt", SettingsPage)]           # một mục Cài đặt gồm hai thẻ: Thư mục và quét, Tài khoản và dữ liệu
 # Ứng dụng như một cuốn sổ danh bạ ảnh: thanh bên chỉ có hai mục chính; các công cụ còn lại nằm trong nút "Công cụ"
-NAV = ["people", "library", "combo", "favorites", "search", "settings"]          # giống thanh dưới của Android: Model, All, Mashup, Favorite, (Search), Cài đặt
+NAV = ["people", "library", "combo", "favorites", "settings"]          # giống thanh dưới của Android: Model, All, Mashup, Favorite, Cài đặt (Search tạm ẩn, trang vẫn còn)
 TOOL_GROUPS = []
-HIDDEN = ["labels", "similar", "dups"]      # vẫn có trang (các nút nội bộ mở tới), nhưng không hiện trong menu
+HIDDEN = ["labels", "similar", "dups", "search"]      # vẫn có trang (các nút nội bộ mở tới), nhưng không hiện trong menu
 IDLE_LOCK_SECONDS = 10 * 60
 
 
@@ -49,24 +49,35 @@ class MainWindow(QMainWindow):
             self.resize(1200, 760)
         self.setMinimumSize(640, 420)
         root = QWidget()
-        lay = QHBoxLayout(root)
-        side = QWidget()
+        lay = QVBoxLayout(root)
+        side = QWidget()                                   # thanh tab ở ĐÁY cửa sổ, như thanh dưới của Android
         side.setObjectName("sidebar")
-        side.setFixedWidth(132)
-        left = QVBoxLayout(side)
-        left.setContentsMargins(0, 14, 0, 10)
-        brand = QLabel("Private\nPicture")
-        brand.setStyleSheet("color:#F6DDB4;font-size:16px;font-weight:700;padding:4px 14px 10px 14px;background:transparent")
+        side.setFixedHeight(66)
+        left = QHBoxLayout(side)
+        left.setContentsMargins(14, 2, 14, 2)
+        left.setSpacing(10)
+        brand = QLabel("Private Picture")
+        brand.setStyleSheet("color:#F6DDB4;font-size:14px;font-weight:700;background:transparent")
         left.addWidget(brand)
+        left.addStretch(1)
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         from PySide6.QtCore import QSize
-        self.nav.setIconSize(QSize(20, 20))
+        from PySide6.QtWidgets import QListView
+        self.nav.setIconSize(QSize(24, 24))
+        self.nav.setViewMode(QListView.IconMode)           # biểu tượng ở trên, chữ ở dưới
+        self.nav.setFlow(QListView.LeftToRight)
+        self.nav.setWrapping(False)
+        self.nav.setMovement(QListView.Static)
+        self.nav.setSpacing(2)
+        self.nav.setGridSize(QSize(140, 60))
+        self.nav.setFixedHeight(62)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)       # vẫn cuộn được bằng con lăn; không hiện thanh cuộn trắng trên nền tối
-        left.addWidget(self.nav, 1)
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left.addWidget(self.nav)
+        left.addStretch(1)
         if self.ctx.attached and self.ctx.has_password:
-            lockb = QPushButton("🔒 Khóa ứng dụng")
+            lockb = QPushButton("🔒 Khóa")
             lockb.clicked.connect(self.lock_requested.emit)
             left.addWidget(lockb)
         self.stack = QStackedWidget()
@@ -97,6 +108,8 @@ class MainWindow(QMainWindow):
             if key in self.nav_keys:
                 self.rowkey[self.nav.count()] = key
                 self.nav.addItem(QListWidgetItem(theme.nav_icon(key), {"people": "Model", "library": "All", "combo": "Mashup", "favorites": "Favorite", "search": "Search", "settings": "Cài đặt"}.get(key, "Kho mã hóa")))
+                self.nav.item(self.nav.count() - 1).setTextAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+                self.nav.item(self.nav.count() - 1).setSizeHint(QSize(140, 58))
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setFrameShape(QScrollArea.NoFrame)
@@ -107,6 +120,7 @@ class MainWindow(QMainWindow):
             sc.viewport().setStyleSheet("QWidget#pageViewport{background:transparent}")
             sc.setWidget(p)
             self.stack.addWidget(sc)
+        self.nav.setFixedWidth(self.nav.count() * 144 + 10)           # đủ rộng cho mọi tab (ở giữa thanh dưới)
         # nút "Công cụ" ở cuối thanh bên: nhãn, ảnh tương tự, ảnh trùng, tìm kiếm, kho mã hóa, thư mục và quét, tài khoản
         self.scan_l = QLabel("")                            # tiến độ quét ngầm, nhỏ, chỉ hiện khi đang quét
         self.scan_l.setStyleSheet("color:#D1A468;font-size:11px;padding:0 10px;background:transparent")
@@ -132,12 +146,12 @@ class MainWindow(QMainWindow):
         self.tools_b.setVisible(False)                      # Cài đặt nay là một mục ngang hàng trên thanh bên (như tab Cài đặt của Android)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(side)
         pad = QWidget()
         pl = QVBoxLayout(pad)
-        pl.setContentsMargins(20, 14, 20, 12)
+        pl.setContentsMargins(8, 6, 8, 4)
         pl.addWidget(self.stack)
         lay.addWidget(pad, 1)
+        lay.addWidget(side)
         self.setCentralWidget(root)
         self.nav.currentRowChanged.connect(self.switch)
         self.stack.currentChanged.connect(self.update_scan_gate)
@@ -502,8 +516,8 @@ class MainWindow(QMainWindow):
         for row, key in self.rowkey.items():
             it = self.nav.item(row)
             if it is not None and key in ("people", "library", "combo", "favorites"):
-                it.setText({"people": f"Model\n{people:,}", "library": f"All\n{photos:,}", "combo": f"Mashup\n{combos:,}",
-                            "favorites": f"Favorite\n{favs:,}"}[key].replace(",", "."))
+                it.setText({"people": f"Model  {people:,}", "library": f"All  {photos:,}", "combo": f"Mashup  {combos:,}",
+                            "favorites": f"Favorite  {favs:,}"}[key].replace(",", "."))
 
     def quit_for_update(self):
         """Thoát hẳn ngay để bộ cập nhật chép tệp mới: dừng các luồng nền, lưu dữ liệu rồi kết thúc tiến trình."""

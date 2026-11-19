@@ -64,13 +64,13 @@ QLabel, QCheckBox, QRadioButton, QSlider, QProgressBar {{ background: transparen
 QMainWindow, QDialog, QMessageBox {{ background: {CREAM}; }}
 QToolTip {{ background: {DARK}; color: {TIP_FG}; border: 0; border-radius: 6px; padding: 6px 10px; }}
 
-QListWidget#nav {{ background: {DARK}; color: #E8E1D2; border: 0; outline: 0; font-size: 14px; padding: 6px 2px; }}
-QListWidget#nav::item {{ padding: 9px 6px; margin: 2px 2px; border-radius: 10px; }}
-QListWidget#nav::item:hover {{ background: rgba(255,255,255,.07); }}
-QListWidget#nav::item:selected {{ background: rgba(209,164,104,.22); color: #F6DDB4; }}
+QListWidget#nav {{ background: transparent; color: #A8A190; border: 0; outline: 0; font-size: 12px; font-weight: 600; padding: 0; }}
+QListWidget#nav::item {{ padding: 4px 6px; margin: 0; border-radius: 10px; }}
+QListWidget#nav::item:hover {{ background: rgba(255,255,255,.06); }}
+QListWidget#nav::item:selected {{ background: transparent; color: #D8A863; }}
 QListWidget#nav QScrollBar:vertical {{ background: transparent; width: 6px; margin: 0; }}
 QListWidget#nav QScrollBar::handle:vertical {{ background: rgba(255,255,255,.18); border-radius: 3px; }}
-QWidget#sidebar {{ background: {DARK}; }}
+QWidget#sidebar {{ background: {DARK}; border-top: 1px solid rgba(255,255,255,.10); }}
 QWidget#sidebar QPushButton {{ background: rgba(255,255,255,.06); color: #E8E1D2; border: 0; border-radius: 10px; margin: 8px 6px; padding: 8px 4px; }}
 QWidget#sidebar QPushButton:hover {{ background: {BRASS}; color: #FFFFFF; }}
 
@@ -141,7 +141,7 @@ def _pen(color, w=1.7):
 def nav_icon(kind, size=20):
     """Biểu tượng đường nét cho thanh bên (hai màu: thường và khi được chọn)."""
     icon = QIcon()
-    for mode, color in ((QIcon.Normal, "#CFC6B3"), (QIcon.Selected, "#F6DDB4")):
+    for mode, color in ((QIcon.Normal, "#A8A190"), (QIcon.Selected, "#D8A863")):
         pm = QPixmap(size * 2, size * 2)
         pm.fill(Qt.transparent)
         p = QPainter(pm)
@@ -159,14 +159,11 @@ def nav_icon(kind, size=20):
         elif kind == "combo":
             p.drawEllipse(QPointF(9, 12), 5.5, 5.5)
             p.drawEllipse(QPointF(15, 12), 5.5, 5.5)
-        elif kind == "favorites":                              # Favorite = ảnh yêu thích: ngôi sao (trái tim chỉ dùng cho người ở Model)
-            import math
-            star = QPolygonF()
-            for k in range(10):
-                r = 9.5 if k % 2 == 0 else 4.2
-                a = math.radians(-90 + k * 36)
-                star.append(QPointF(12 + r * math.cos(a), 12.6 + r * math.sin(a)))
-            p.drawPolygon(star)
+        elif kind == "favorites":                              # Favorite: trái tim viền như thanh dưới của điện thoại
+            heart = QPainterPath(QPointF(12, 20.2))
+            heart.cubicTo(2.6, 13.6, 4.2, 4.6, 12, 9)
+            heart.cubicTo(19.8, 4.6, 21.4, 13.6, 12, 20.2)
+            p.drawPath(heart)
         elif kind == "similar":
             p.drawRoundedRect(QRectF(3, 6, 12, 12), 2.5, 2.5)
             p.drawRoundedRect(QRectF(9, 10, 12, 10), 2.5, 2.5)
