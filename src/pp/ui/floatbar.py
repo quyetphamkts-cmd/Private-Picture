@@ -309,11 +309,12 @@ class SelBar(TopBar):
         self.btn_back = RoundBtn("back", "Quay lại")
         self.btn_close = RoundBtn("close", "Bỏ chọn")
         self.btn_add = RoundBtn("person+", "Thêm các ảnh đã chọn vào một người…")
+        self.btn_ok = RoundBtn("tick", "Xác nhận các ảnh đã chọn là của tên đang chọn ở đầu trang")
         self.btn_rm = RoundBtn("person-", "Không phải người này: loại các ảnh đã chọn khỏi nhóm")
         self.btn_dots = RoundBtn("dots", "Thêm tùy chọn")
         self.title = TitlePill()
         self.title.hide()
-        for w in (self.btn_back, self.btn_close, self.btn_add):
+        for w in (self.btn_back, self.btn_close, self.btn_add, self.btn_ok):
             self.left.addWidget(w)
         self.left.addWidget(self.title)
         self.right.addWidget(self.btn_rm)
@@ -321,6 +322,7 @@ class SelBar(TopBar):
         self.btn_back.clicked.connect(lambda: self.back_fn() if self.back_fn else None)
         self.btn_close.clicked.connect(lambda: self.src and self.src.clear_sel())
         self.btn_add.clicked.connect(lambda: self.src and self.src.add_to_person())
+        self.btn_ok.clicked.connect(lambda: self.src and self.src.run_confirm())
         self.btn_rm.clicked.connect(lambda: self.src and self.src.run_remove())
         self.btn_dots.clicked.connect(self.show_menu)
         self.has_title = False
@@ -355,6 +357,8 @@ class SelBar(TopBar):
         sel = n > 0
         self.btn_close.setVisible(sel)
         self.btn_add.setVisible(sel)
+        ok = getattr(self.src, "cand_ok", None)
+        self.btn_ok.setVisible(sel and bool(ok and ok()))
         self.btn_back.setVisible((not sel) and self.back_fn is not None)
         self.title.setVisible((not sel) and self.has_title)
         self.btn_rm.setVisible(sel and bool(getattr(self.src, "remove_fn", None)))

@@ -1870,3 +1870,37 @@ def rank(ids, mat, query_vec, top=300, min_sim=None):
 
 def prototype(mat_rows):
     return _unit(np.mean(_unit(mat_rows.astype(np.float32)), axis=0))
+
+
+# ---------------------------------------------------------------- xác nhận ảnh của người chưa đặt tên vào một người đã có tên (kèm hoàn tác)
+def confirm_to_person(db, image_ids, to_pid, from_pid):
+    """Người dùng xác nhận các ảnh của nhóm `from_pid` (chưa đặt tên) thật ra là của người `to_pid`: mặt của nhóm trong những ảnh đó chuyển sang người đích
+    (xác nhận thủ công, không bị app sửa lại). Trả về bản ghi để hoàn tác (undo_confirm)."""
+    rec = []
+    for iid in image_ids:
+        if db.one("SELECT 1 FROM faces WHERE image_id=? AND person_id=? AND locked=1 AND lsrc='user'", (iid, to_pid)):
+            continue                                              # ảnh đã có mặt do người dùng xác nhận của người đích: không xếp thêm mặt thứ hai
+        for f in db.q("SELECT id, person_id, locked, lsrc FROM faces WHERE image_id=? AND person_id=?", (iid, from_pid)):
+            rec.append({"fid": f["id"], "person": f["person_id"], "locked": f["locked"], "lsrc": f["lsrc"]})
+            db.c.execute("UPDATE faces SET person_id=?, locked=1, lsrc='user' WHERE id=?", (to_pid, f["id"]))
+    db.commit()
+    return rec
+
+
+def undo_confirm(db, rec):
+    """Hoàn tác confirm_to_person: mỗi mặt về đúng người và trạng thái trước đó."""
+    for r in rec:
+        db.c.execute("UPDATE faces SET person_id=?, locked=?, lsrc=? WHERE id=?", (r["person"], r["locked"], r["lsrc"], r["fid"]))
+    db.commit()
+    return len(rec)
+
+
+def unconfirm_images(db, image_ids, to_pid, from_pid):
+    """Như hoàn tác nhưng theo ảnh (dùng cho thao tác gửi từ điện thoại): mặt do người dùng xác nhận vào `to_pid` trong các ảnh đó về lại nhóm `from_pid`."""
+    n = 0
+    for iid in image_ids:
+        for f in db.q("SELECT id FROM faces WHERE image_id=? AND person_id=? AND lsrc='user'", (iid, to_pid)):
+            db.c.execute("UPDATE faces SET person_id=?, locked=0, lsrc=NULL WHERE id=?", (from_pid, f["id"]))
+            n += 1
+    db.commit()
+    return n

@@ -1237,3 +1237,25 @@ def test_cover_pool_rounds_star_first(tmp_path, monkeypatch):
     assert seen[:2] == [a_star, b1] and seen[2] == a_plain                     # vòng 1: mỗi người một ảnh (sao trước); vòng 2: ảnh thứ hai
     assert cover.pooled_bytes(db, a_star)[:2] == b"\xff\xd8"
     assert cover.ensure_pool(db) == 0                                          # đã đủ: không làm lại
+
+
+def test_confirm_to_person_and_undo(tmp_path, monkeypatch):
+    from pp import cluster
+    db = _db(tmp_path, monkeypatch)
+    a = db.x("INSERT INTO persons(name) VALUES(NULL)").lastrowid          # nhóm chưa đặt tên
+    b = db.x("INSERT INTO persons(name) VALUES('Cleo')").lastrowid
+    ims, fids = [], []
+    for i in range(3):
+        iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/c/{i}.jpg", 1, 1, 9, 9, "t")).lastrowid
+        fids.append(db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id,locked) VALUES(?,?,?,?,?,?,?,?,?,0)", (iid, .1, .1, .2, .2, .95, 80, b"", a)).lastrowid)
+        ims.append(iid)
+    rec = cluster.confirm_to_person(db, ims[:2], b, a)
+    assert len(rec) == 2
+    rows = {r["id"]: (r["person_id"], r["locked"], r["lsrc"]) for r in db.q("SELECT id,person_id,locked,lsrc FROM faces")}
+    assert rows[fids[0]] == (b, 1, "user") and rows[fids[2]][0] == a
+    cluster.undo_confirm(db, rec)
+    rows = {r["id"]: (r["person_id"], r["locked"], r["lsrc"]) for r in db.q("SELECT id,person_id,locked,lsrc FROM faces")}
+    assert all(rows[f][0] == a and rows[f][1] == 0 for f in fids)
+    cluster.confirm_to_person(db, ims[:1], b, a)
+    assert cluster.unconfirm_images(db, ims[:1], b, a) == 1                 # hoàn tác theo ảnh (thao tác từ điện thoại)
+    assert db.one("SELECT person_id FROM faces WHERE id=?", (fids[0],))["person_id"] == a

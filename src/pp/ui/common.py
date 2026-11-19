@@ -1292,8 +1292,9 @@ class Viewer(QDialog):
     indexChanged = Signal(int)
     _got = Signal(int, object)
 
-    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None, add=None, cloth=None, confirm=None):
+    def __init__(self, items, index, loader, parent=None, model=None, on_index=None, info=None, fav=None, menu=None, link=None, extra=None, faces=None, face_menu=None, add=None, cloth=None, confirm=None, compare=None):
         super().__init__(parent)
+        self.compare = compare                              # {name, pid, pixmap}: ảnh profile đang so sánh, hiện ở nửa bên trái
         self.add_fn, self.cloth = add, cloth                  # add(item, viewer): thêm vào người · cloth=(lấy_nhóm(item), đặt_nhóm(item, mã)): phân loại Dressed / Naked ngay khi xem
         self.faces_fn, self.face_menu_fn = faces, face_menu     # faces(item) -> [{box,pid,name,fid}]; face_menu(item, face, viewer) -> menu cho mặt đó
         self.face_list = []
@@ -1316,7 +1317,16 @@ class Viewer(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         self.view = ImageView()
-        lay.addWidget(self.view, 1)
+        body = QHBoxLayout()                                 # chia đôi theo chiều ngang khi có ảnh profile để so sánh: trái ảnh profile, phải ảnh đang xem
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self.cmp_box = QLabel()
+        self.cmp_box.setAlignment(Qt.AlignCenter)
+        self.cmp_box.setStyleSheet("background:#0C0A08")
+        body.addWidget(self.cmp_box, 1)
+        body.addWidget(self.view, 1)
+        self.cmp_box.setVisible(bool(compare))
+        lay.addLayout(body, 1)
         self.view.viewport().setMouseTracking(True)
         self.view.contextRequested.connect(self._show_menu)
         self.face_box = QGraphicsRectItem()                      # khung sáng quanh khuôn mặt đang rê chuột vào
@@ -1344,6 +1354,16 @@ class Viewer(QDialog):
         self.btn_add = RoundBtn("person+", "Thêm ảnh này vào một người…")
         self.btn_add.clicked.connect(lambda: self.add_fn(self.items[self.i], self) if self.add_fn else None)
         self.btn_add.setVisible(add is not None)
+        self.cmp_name = QPushButton()                            # tên người đang so sánh (bấm để mở trang người đó), nằm dưới ảnh profile
+        self.cmp_name.setParent(self)
+        self.cmp_name.setCursor(Qt.PointingHandCursor)
+        self.cmp_name.setStyleSheet("QPushButton{border:none;background:transparent;color:#E5C07B;font-size:18px;font-weight:700;text-decoration:underline}")
+        self.cmp_name.hide()
+        if compare:
+            self.cmp_name.setText(compare["name"])
+            self.cmp_name.show()
+            if compare.get("pid") and link:
+                self.cmp_name.clicked.connect(lambda: link(f"person:{compare['pid']}"))
         self.top.left.addWidget(self.btn_close)
         self.top.left.addWidget(self.btn_add)
         self.confirm_fn = confirm                             # xem từ trang ảnh đề xuất: ô thứ ba là dấu ✓ xác nhận đúng người
@@ -1450,7 +1470,17 @@ class Viewer(QDialog):
         self.mini.raise_()
         self.panel.raise_()
         h = self.view.height() or self.height()
-        self.prev_b.move(18, (h - 48) // 2)
+        if self.compare:                                     # nửa trái: ảnh profile vừa khung, tên bấm được ngay dưới
+            pm = self.compare.get("pixmap")
+            hw = self.width() // 2
+            if pm is not None and not pm.isNull():
+                self.cmp_box.setPixmap(pm.scaled(max(50, hw - 60), max(50, h - 190), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                self.cmp_box.setText("Chưa có ảnh profile")
+            self.cmp_name.adjustSize()
+            self.cmp_name.move(24, h - self.foot.height() - 64)
+            self.cmp_name.raise_()
+        self.prev_b.move((self.width() // 2 if self.compare else 0) + 18, (h - 48) // 2)
         self.next_b.move(self.width() - 66, (h - 48) // 2)
         self.top.raise_()
         self.foot.raise_()

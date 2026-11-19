@@ -207,7 +207,7 @@ def _viewer_cloth(ctx, it):
     return r["grp"] if r else None
 
 
-def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=False, pid=None, confirm=None, reject=None):
+def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=False, pid=None, confirm=None, reject=None, compare=None):
     loader = make_loader(ctx)
     extra = [("Vị trí", "Mở vị trí ảnh này trong All để xem các ảnh gần nó", lambda it: ctx.locate.emit(it["id"]))]
     if pid is not None:                                       # đang xem ảnh trong nhóm của một người: có nút loại khỏi nhóm
@@ -223,7 +223,7 @@ def open_viewer(parent, items, index, ctx, model=None, on_index=None, cloth=Fals
                lambda it: _viewer_faces(ctx, it), lambda it, face, vw: _viewer_face_menu(ctx, it, face, vw),
                add=lambda it, vw: assign_dialog(ctx, vw, [it["id"]], pid),
                cloth=(lambda it: _viewer_cloth(ctx, it), lambda it, code: (clothing.set_manual(ctx.db, [it["id"]], code), ctx.changed.emit())),
-               confirm=confirm)
+               confirm=confirm, compare=compare)
     v.showMaximized()
     return v
 
@@ -264,6 +264,7 @@ class PhotoGrid(QWidget):
         super().__init__()
         self.ctx, self.page, self.extra = ctx, parent_page, extra_actions or []
         self.legacy = False                          # hàng nút chữ cũ chỉ còn dùng khi chưa có thanh nút tròn
+        self.cand_ok, self.confirm_cb = None, None   # trang người chưa đặt tên: nút ✓ xác nhận ảnh đã chọn vào tên đang chọn
         self.remove_fn = next((fn for n, fn in self.extra if n.startswith("Không phải người này")), None)
         self.confirm_fn = next((fn for n, fn in self.extra if n.startswith("Đúng, thêm vào nhóm này")), None)
         self.viewer_marks = viewer_marks            # mở ảnh ra xem: Ctrl đánh dấu chọn, thoát ra các ảnh đã chọn vẫn được đánh dấu trong danh sách
@@ -374,9 +375,14 @@ class PhotoGrid(QWidget):
             self.grid.sel.clear()                        # bấm thường chỉ để mở ảnh xem, không coi là đã chọn ảnh đó (chưa chọn ảnh nào thì bấm vùng bất kỳ vẫn mở ảnh)
             self.grid.selectionChanged.emit(0)
             self.grid.viewport().update()
+        cmpi = pg.compare_for_viewer() if isinstance(pg, PeoplePage) and getattr(pg, "cand_cards", None) and self is not getattr(pg, "guess", None) else None
+        conf = (lambda it: self.confirm_fn([it])) if self.confirm_fn else None
+        if cmpi:                                                    # trang người chưa đặt tên: xem ảnh chia đôi với ảnh profile, ✓ đưa ảnh vào tên đang chọn
+            conf = lambda it: pg.confirm_selected([it])
         v = open_viewer(self.window(), self.model.items, i.row(), self.ctx, self.model, None if self.viewer_marks else self.grid.reveal,
                         isinstance(pg, PeoplePage), getattr(pg, "pid", None) if isinstance(pg, PeoplePage) else None,
-                        confirm=(lambda it: self.confirm_fn([it])) if self.confirm_fn else None,
+                        compare=cmpi,
+                        confirm=conf,
                         reject=(lambda it: self.remove_fn([it])) if (self.confirm_fn and self.remove_fn) else None)
         v.finished.connect(lambda _=0, vw=v: self.grid.show_item(vw.i))        # thoát xem ảnh: danh sách cuộn tới ảnh vừa xem, không mất dấu
         if self.viewer_marks:
@@ -463,6 +469,10 @@ class PhotoGrid(QWidget):
     def run_remove(self):
         if self.remove_fn:
             self._run_extra(self.remove_fn)
+
+    def run_confirm(self):
+        if self.confirm_cb:
+            self.confirm_cb()
 
     def classify_selected(self, code):
         """Đang chọn ảnh: bấm Dressed / Naked để phân loại luôn các ảnh đã chọn. Trả về True nếu đã xử lý (có ảnh được chọn)."""
@@ -783,6 +793,58 @@ class ChoiceBox(QComboBox):
             self.addItem(text, k)
         self.setCurrentIndex(max(0, self.findData(self.value)))
         self.blockSignals(False)
+
+
+class CandCard(QFrame):
+    """Ô một tên đề xuất ở đầu trang người chưa đặt tên: ảnh profile, tên (bấm tên để mở trang người đó), phần trăm. Bấm ô để chọn làm profile đang so sánh."""
+    picked = Signal(object)
+    nameClicked = Signal(object)
+
+    def __init__(self, cand, pixmap):
+        super().__init__()
+        self.cand = cand
+        self.sel = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(104)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(8, 8, 12, 8)
+        h.setSpacing(10)
+        self.av = QLabel()
+        self.av.setFixedSize(66, 88)
+        if pixmap is not None and not pixmap.isNull():
+            self.av.setPixmap(pixmap.scaled(66, 88, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation).copy(0, 0, 66, 88))
+        else:
+            self.av.setText("?")
+            self.av.setAlignment(Qt.AlignCenter)
+            self.av.setStyleSheet("background:#2A241B;color:#A8A190;border-radius:8px;font-size:22px")
+        h.addWidget(self.av)
+        v = QVBoxLayout()
+        v.setSpacing(2)
+        self.name = QPushButton(cand["name"])
+        self.name.setCursor(Qt.PointingHandCursor)
+        self.name.setFlat(True)
+        self.name.setToolTip("Bấm tên để mở trang ảnh của người này" if cand.get("pid") else "Tên này chưa có trang riêng")
+        self.name.setStyleSheet("QPushButton{border:none;background:transparent;color:#E5C07B;font-size:16px;font-weight:700;text-align:left;padding:0;text-decoration:underline}")
+        self.name.clicked.connect(lambda: self.nameClicked.emit(self.cand))
+        self.sub = QLabel(cand.get("sub", ""))
+        self.sub.setStyleSheet("color:#A8A190;font-size:11px;background:transparent")
+        self.hint = QLabel()
+        self.hint.setStyleSheet("color:#7A7464;font-size:10px;background:transparent")
+        v.addWidget(self.name, 0, Qt.AlignLeft)
+        v.addWidget(self.sub)
+        v.addWidget(self.hint)
+        v.addStretch(1)
+        h.addLayout(v, 1)
+        self.set_selected(False)
+
+    def set_selected(self, on):
+        self.sel = on
+        self.setStyleSheet("CandCard{background:%s;border-radius:14px;border:%s}" % ("#30281E" if on else "#201B15", "3px solid #A9793D" if on else "1px solid rgba(169,121,61,.35)"))
+        self.hint.setText("đang chọn: bấm ✓ để xác nhận" if on else "bấm để chọn")
+
+    def mousePressEvent(self, e):
+        self.picked.emit(self)
+        super().mousePressEvent(e)
 
 
 class OverlayHost(QWidget):
@@ -1370,6 +1432,7 @@ class GroupedPhotos(QWidget):
     def __init__(self, ctx, page, extra_actions=None, bar=True):
         super().__init__()
         self.ctx, self.page = ctx, page
+        self.cand_ok, self.confirm_cb = None, None
         self.pos_key, self._pos_done = None, None            # đặt khóa thì nhớ vị trí cuộn (ảnh đang ở mép trên), kể cả khi mở lại ứng dụng
         self._pos_t = QTimer(self)
         self._pos_t.setSingleShot(True)
@@ -1442,6 +1505,10 @@ class GroupedPhotos(QWidget):
         sel = self.selected()
         if sel and self.remove_fn:
             self.remove_fn(sel)
+
+    def run_confirm(self):
+        if self.confirm_cb:
+            self.confirm_cb()
 
     def fill_menu(self, m):
         from PySide6.QtWidgets import QWidgetAction
@@ -1742,6 +1809,16 @@ class PeoplePage(Page):
         sbl.addWidget(self.sug_no)
         self.sug_bar.setVisible(False)
         l2.addWidget(self.sug_bar)
+        self.cand_strip = QWidget()                                # các tên đề xuất (tối đa 3) dạng ô có ảnh profile: bấm ô để chọn, ✓ để xác nhận ảnh vào tên đó
+        csl = QHBoxLayout(self.cand_strip)
+        csl.setContentsMargins(14, 2, 14, 6)
+        csl.setSpacing(10)
+        self.cand_lay = csl
+        self.cand_cards, self.cand_sel = [], None
+        self._return_pid = None
+        self._undo_rec = None
+        self.cand_strip.setVisible(False)
+        l2.addWidget(self.cand_strip)
         self.undo_bar = QWidget()                                  # sau khi loại ảnh khỏi người: nút Hoàn tác (phòng bấm nhầm)
         ubl = QHBoxLayout(self.undo_bar)
         ubl.setContentsMargins(14, 2, 14, 2)
@@ -1763,6 +1840,9 @@ class PeoplePage(Page):
         self.pstack.addWidget(self.grouped)
         self.pstack.addWidget(self.photos)
         self.pstack.currentChanged.connect(lambda _: self.pbar.set_src(self.cur_grid()))
+        for g in (self.grouped, self.photos):
+            g.cand_ok = lambda: bool(self.cand_cards)                       # có tên đề xuất: hiện nút ✓ khi đang chọn ảnh
+            g.confirm_cb = self.confirm_selected
         self.pbar.set_src(self.grouped)
         l2.addWidget(self.pstack, 1)
         self.sug_btn = RoundBtn("person", "Ảnh app chưa chắc là của người này: bấm để xem và xác nhận đúng / sai")      # nút hình người nhấp nháy: chỉ hiện khi còn ảnh đề xuất
@@ -2078,6 +2158,129 @@ class PeoplePage(Page):
     def close_suggest(self):
         self.stack.setCurrentIndex(1)
 
+    def _candidate_list(self, name, sg, cands):
+        """Các tên đề xuất cho người chưa đặt tên: [{name, pid (người đã có tên khớp, nếu có), sub}]."""
+        if name:
+            return []
+        db = self.ctx.db
+        raw = []
+        if sg:
+            raw.append({"name": sg["name"], "sub": f"theo tên trên {sg['n_arch']} tệp nén"})
+        for c in cands:
+            raw.append({"name": c["name"], "sub": f"{round(100 * c['score'])}%"})
+        named = {}
+        for p in db.persons():
+            if p["name"] and p["id"] != self.pid:
+                named.setdefault(cluster.fold(p["name"]), []).append(p)
+        out = []
+        for c in raw[:3]:
+            ps = sorted(named.get(cluster.fold(c["name"]), []), key=lambda p: -p["n"])
+            c["pid"] = ps[0]["id"] if ps else None
+            out.append(c)
+        return out
+
+    def _cand_pixmap(self, pid):
+        """Ảnh profile của một người (từ giữa đùi lên, như ảnh đại diện); không có thì khuôn mặt đã cắt sẵn."""
+        if pid is None:
+            return None
+        db = self.ctx.db
+        try:
+            pick = db.cover_pick(pid, cover.KIND)
+            if pick:
+                b = cover.profile_cached(db, pick["fid"], pick["thumb"], (pick["x"], pick["y"], pick["w"], pick["h"]), pick["path"], 300,
+                                         lambda row={"id": pick["iid"], "path": pick["path"]}: sync.read_original_any(db, row))
+                pm = QPixmap()
+                if b and pm.loadFromData(b):
+                    return pm
+            ft = db.person_cover(pid)
+            if ft:
+                pm = QPixmap()
+                if pm.loadFromData(SEC.read_file(ft)):
+                    return pm
+        except Exception:
+            pass
+        return None
+
+    def _build_candidates(self, name, sg, cands):
+        for c in self.cand_cards:
+            c.setParent(None)
+            c.deleteLater()
+        self.cand_cards = []
+        while self.cand_lay.count():
+            self.cand_lay.takeAt(0)
+        lst = self._candidate_list(name, sg, cands)
+        for c in lst:
+            card = CandCard(c, self._cand_pixmap(c.get("pid")))
+            card.picked.connect(self._cand_picked)
+            card.nameClicked.connect(self.open_candidate)
+            self.cand_lay.addWidget(card, 1)
+            self.cand_cards.append(card)
+        self.cand_lay.addStretch(0)
+        keep = self.cand_sel
+        self.cand_sel = None
+        for card in self.cand_cards:
+            if keep is not None and card.cand["name"] == keep["name"]:
+                self._select_card(card)
+        if self.cand_sel is None and len(self.cand_cards) == 1:
+            self._select_card(self.cand_cards[0])                     # chỉ có một tên đề xuất: chọn sẵn
+        self.cand_strip.setVisible(bool(lst))
+
+    def _select_card(self, card):
+        self.cand_sel = card.cand
+        for c in self.cand_cards:
+            c.set_selected(c is card)
+
+    def _cand_picked(self, card):
+        """Bấm một ô: chọn làm profile đang so sánh. Nếu đang chọn sẵn các ảnh thì bấm ô là xác nhận luôn các ảnh đó vào tên này."""
+        self._select_card(card)
+        if self.cur_grid().sel_count() > 0:
+            self.confirm_selected()
+
+    def selected_images(self):
+        return self.cur_grid().selected()
+
+    def confirm_selected(self, sel=None):
+        """✓: đưa các ảnh đã chọn (hoặc `sel`) vào tên đang chọn. Tên chưa có trang riêng thì đặt tên cho cả nhóm."""
+        sel = sel if sel is not None else self.selected_images()
+        c = self.cand_sel
+        if not sel:
+            return
+        if c is None:
+            QMessageBox.information(self, "Xác nhận", "Hãy bấm vào một ô tên đề xuất ở đầu trang để chọn tên trước.")
+            return
+        ids = [x["id"] for x in sel]
+        if c.get("pid") is None:                                 # tên này chưa có người nào mang: xác nhận = đặt tên cho cả nhóm
+            self.accept_candidate(c["name"])
+            return
+        rec = cluster.confirm_to_person(self.ctx.db, ids, c["pid"], self.pid)
+        self._undo_rec = rec
+        self._undo = None
+        self.undo_lab.setText(f"Đã xác nhận {len(ids)} ảnh vào {c['name']}.")
+        self.undo_bar.setVisible(True)
+        self.undo_t.start(30000)
+        self.cur_grid().clear_sel()
+        self.ctx.changed.emit()
+
+    def open_candidate(self, cand):
+        """Bấm tên đề xuất: mở trang ảnh của người đó để so; ← quay lại trang người chưa đặt tên."""
+        if not cand.get("pid"):
+            return
+        self._return_pid = self.pid
+        self.pid = cand["pid"]
+        self.cand_sel = None
+        self.show_person()
+
+    def compare_for_viewer(self):
+        """Thông tin ảnh profile đang so sánh để hiện nửa bên trái khi xem ảnh (None nếu không ở chế độ so sánh)."""
+        c = self.cand_sel
+        if not c or not self.cand_cards:
+            return None
+        pm = None
+        for card in self.cand_cards:
+            if card.cand["name"] == c["name"] and card.av.pixmap() is not None and not card.av.pixmap().isNull():
+                pm = self._cand_pixmap(c.get("pid"))
+        return {"name": c["name"], "pid": c.get("pid"), "pixmap": pm}
+
     def show_person(self):
         r = self.ctx.db.one("SELECT name FROM persons WHERE id=?", (self.pid,))
         if not r:
@@ -2089,7 +2292,8 @@ class PeoplePage(Page):
             w = self.cand_box.takeAt(0).widget()
             if w is not None:
                 w.deleteLater()
-        self.sug_bar.setVisible(bool(sg) or bool(cands))
+        self._build_candidates(r["name"], sg, cands)
+        self.sug_bar.setVisible(False)                          # (thay bằng dải ô ảnh profile ở trên)
         self.sug_yes.setVisible(bool(sg))
         if sg:
             self.sug_lab.setText(f"App đoán người này là <b>{sg['name']}</b> (theo tên trên {sg['n_arch']} tệp nén). Xem các ảnh bên dưới, đúng thì bấm xác nhận.")
@@ -2156,6 +2360,10 @@ class PeoplePage(Page):
         self.stack.setCurrentIndex(2 if (self.stack.currentIndex() == 2 and gs) else 1)
 
     def back(self):
+        if self._return_pid is not None:                        # đang xem trang một tên đề xuất để so: ← về trang người chưa đặt tên
+            self.pid, self._return_pid = self._return_pid, None
+            self.show_person()
+            return
         self.pid = None
         self.stack.setCurrentIndex(0)
         self.refresh()
@@ -2249,6 +2457,12 @@ class PeoplePage(Page):
         self.ctx.changed.emit()
 
     def undo_remove(self):
+        if getattr(self, "_undo_rec", None):                     # hoàn tác xác nhận ảnh vào một tên
+            cluster.undo_confirm(self.ctx.db, self._undo_rec)
+            self._undo_rec = None
+            self.undo_bar.setVisible(False)
+            self.ctx.changed.emit()
+            return
         if getattr(self, "_undo", None):
             pid, ids = self._undo
             cluster.restore_to_person(self.ctx.db, ids, pid)

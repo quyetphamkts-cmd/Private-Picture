@@ -1148,3 +1148,41 @@ def test_bottom_right_lists_all_running_tasks(tmp_path, monkeypatch):
     ctx.scan_status.emit("Đã quét xong")
     w._drop_finished_tasks()
     assert not w.scan_l.isVisible()
+
+
+def test_unnamed_person_candidates_confirm_and_undo(tmp_path, monkeypatch):
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    from pp.db import vec_to_blob
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import PeoplePage
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "cf"))
+    ctx = AppContext()
+    named = ctx.db.x("INSERT INTO persons(name) VALUES('Cleo Pham')").lastrowid
+    unk = ctx.db.x("INSERT INTO persons(name) VALUES(NULL)").lastrowid
+    ims = []
+    for i in range(4):
+        iid = ctx.db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/u/{i}.jpg", 1, 1, 9, 9, "t")).lastrowid
+        ctx.db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id,locked) VALUES(?,?,?,?,?,?,?,?,?,0)",
+                 (iid, .1, .1, .2, .2, .95, 80, vec_to_blob(np.ones(128, np.float32)), unk))
+        ims.append(iid)
+    ctx.db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id,locked) VALUES(?,?,?,?,?,?,?,?,?,1)",
+             (ims[0], .6, .1, .2, .2, .95, 80, vec_to_blob(np.ones(128, np.float32)), named))
+    ctx.db.x("INSERT INTO person_suggest(person_id,name,n_arch,n_img) VALUES(?,?,?,?)", (unk, "Cleo Pham", 3, 4))
+    page = PeoplePage(ctx)
+    page.pid = unk
+    page.show_person()
+    assert len(page.cand_cards) == 1 and page.cand_cards[0].cand["pid"] == named and page.cand_sel["pid"] == named      # một tên đề xuất: chọn sẵn
+    items = [it for _, pg, _ in page.grouped.parts.values() for it in pg.model.items]
+    sel = [it for it in items if it["id"] in (ims[1], ims[2])]
+    page.confirm_selected(sel)
+    pid_of = lambda i: ctx.db.one("SELECT person_id FROM faces WHERE image_id=? AND locked=1 AND lsrc='user'", (i,))
+    assert pid_of(ims[1])["person_id"] == named and pid_of(ims[2])["person_id"] == named
+    assert page.undo_bar.isVisibleTo(page) and "2 ảnh" in page.undo_lab.text()
+    page.undo_remove()                                                      # hoàn tác phòng chọn nhầm
+    assert pid_of(ims[1]) is None and ctx.db.one("SELECT person_id FROM faces WHERE image_id=? AND person_id=?", (ims[1], unk))
+    page.open_candidate(page.cand_cards[0].cand)                           # bấm tên: mở trang người đó
+    assert page.pid == named
+    page.back()                                                             # ← về trang người chưa đặt tên
+    assert page.pid == unk
