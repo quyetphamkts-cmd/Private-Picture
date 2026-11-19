@@ -88,6 +88,7 @@ object Store {
         favPrefs = ctx.getSharedPreferences("pp_fav", Context.MODE_PRIVATE)
         viewPrefs = ctx.getSharedPreferences("pp_view", Context.MODE_PRIVATE)
         logPrefs = ctx.getSharedPreferences("pp_log", Context.MODE_PRIVATE)
+        rotPrefs = ctx.getSharedPreferences("pp_rot", Context.MODE_PRIVATE)
         layout = viewPrefs.getString("layout", "day") ?: "day"
         showDates = viewPrefs.getBoolean("dates", true)
         posPrefs = ctx.getSharedPreferences("pp_pos", Context.MODE_PRIVATE)
@@ -126,6 +127,14 @@ object Store {
     var modelLetter: String
         get() = posPrefs.getString("letter", "") ?: ""
         set(v) { posPrefs.edit().putString("letter", v).apply() }
+    /** Góc xoay (độ) người dùng đã xoay ảnh khi xem bằng hai ngón tay: ảnh giữ theo hướng đó ở những lần xem sau. */
+    fun rotationOf(uid: String): Float = rotPrefs.getFloat("r_$uid", 0f)
+    fun setRotation(uid: String, deg: Float) {
+        val d = ((deg % 360f) + 360f) % 360f
+        if (d < 0.5f || d > 359.5f) rotPrefs.edit().remove("r_$uid").apply() else rotPrefs.edit().putFloat("r_$uid", d).apply()
+    }
+    private lateinit var rotPrefs: android.content.SharedPreferences
+
     /** Ảnh đầu tiên đang nhìn thấy ở mỗi lưới (All, Favorite, Mashup, trang người…): lần mở sau (kể cả mở lại app) lưới về đúng chỗ đó. */
     fun gridAnchor(key: String): String? = posPrefs.getString("a_$key", null)
     fun setGridAnchor(key: String, uid: String) { posPrefs.edit().putString("a_$key", uid).apply() }

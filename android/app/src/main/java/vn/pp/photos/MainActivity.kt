@@ -46,6 +46,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -2328,6 +2329,8 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
     var bmp by remember(uid) { mutableStateOf<Bitmap?>(null) }
     var scale by remember(uid) { mutableStateOf(1f) }
     var offset by remember(uid) { mutableStateOf(Offset.Zero) }
+    var rot by remember(uid) { mutableStateOf(Store.rotationOf(uid)) }            // góc xoay bằng hai ngón tay (độ), nhớ cho lần xem sau
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(uid) {
         bmp = Store.thumb(uid)
         bmp = Store.original(uid) ?: bmp
@@ -2356,7 +2359,7 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
         }
     }
     Box(
-        Modifier.fillMaxSize()
+        Modifier.fillMaxSize().onSizeChanged { boxSize = it }
             .pointerInput(uid) {
                 detectTapGestures(onTap = { onTap() }, onDoubleTap = { tap ->
                     // gõ hai lần: phóng to tại đúng điểm gõ, gõ hai lần nữa để thu về vừa khung
@@ -2381,6 +2384,7 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
                         else if (scale > 1f && (ev.changes.first().position - down0.position).getDistance() > viewConfiguration.touchSlop) panning = true
                         if (panning && (ev.changes.size >= 2 || scale > 1f)) {
                             val zoom = ev.calculateZoom()
+                            if (ev.changes.size >= 2) rot += ev.calculateRotation()                 // hai ngón xoay ảnh
                             val c0 = ev.calculateCentroid(useCurrent = false)
                             val c1 = ev.calculateCentroid(useCurrent = true)
                             if (c0 != Offset.Unspecified && c1 != Offset.Unspecified) {
@@ -2396,12 +2400,23 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
                             ev.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (ev.changes.any { it.pressed })
+                    val q = Math.round(rot / 90f) * 90f                                     // gần một góc vuông (±10°) thì tự nắn cho ngay ngắn
+                    if (Math.abs(rot - q) < 10f) rot = q
+                    Store.setRotation(uid, rot)
                 }
             },
         contentAlignment = Alignment.Center
     ) {
         val b = bmp
         if (b == null) CircularProgressIndicator(color = Color.White)
-        else Image(b.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }, contentScale = ContentScale.Fit)
+        else {
+            // ảnh đã xoay thì thu nhỏ vừa đủ để toàn bộ ảnh (sau khi xoay) vẫn nằm trong khung
+            val W = boxSize.width.toFloat().coerceAtLeast(1f); val H = boxSize.height.toFloat().coerceAtLeast(1f)
+            val ar = b.width.toFloat() / b.height.toFloat()
+            val dw = if (ar >= W / H) W else H * ar; val dh = if (ar >= W / H) W / ar else H
+            val rad = Math.toRadians(rot.toDouble()); val c = Math.abs(Math.cos(rad)).toFloat(); val sn = Math.abs(Math.sin(rad)).toFloat()
+            val fit = minOf(1f, W / (dw * c + dh * sn), H / (dw * sn + dh * c))
+            Image(b.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { scaleX = scale * fit; scaleY = scale * fit; rotationZ = rot; translationX = offset.x; translationY = offset.y }, contentScale = ContentScale.Fit)
+        }
     }
 }
