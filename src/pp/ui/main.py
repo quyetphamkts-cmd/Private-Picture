@@ -130,25 +130,26 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(sc)
         self.nav.setFixedWidth(self.nav.count() * 144 + 10)           # đủ rộng cho mọi tab (ở giữa thanh dưới)
         # nút "Công cụ" ở cuối thanh bên: nhãn, ảnh tương tự, ảnh trùng, tìm kiếm, kho mã hóa, thư mục và quét, tài khoản
-        self.scan_l = QLabel("")                            # tiến độ quét ngầm, nhỏ, chỉ hiện khi đang quét
-        self.scan_l.setStyleSheet("color:#D1A468;font-size:11px;padding:0 10px;background:transparent")
+        self.scan_l = QLabel("")                            # góc dưới bên phải: mọi tiến trình PC đang xử lý (quét, phân tích, đồng bộ, sao lưu, làm ảnh profile…)
+        self.scan_l.setStyleSheet("color:#D1A468;font-size:10px;padding:0 6px;background:transparent")
         self.scan_l.setWordWrap(True)
         self.scan_l.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.scan_l.setVisible(False)
-        self.scan_l.setMaximumHeight(52)
+        self.scan_l.setMaximumHeight(62)
         self.right_lay.insertWidget(0, self.scan_l, 1)
-        self._scan_hide = QTimer(self)                      # thông báo kết quả hiện khoảng 3 giây rồi ẩn
+        self.tasks = {}                                     # khóa tiến trình -> dòng chữ hiện tại (theo thứ tự bắt đầu)
+        self._scan_hide = QTimer(self)                      # dòng kết quả ("Đã quét xong"…) hiện khoảng 3 giây rồi ẩn
         self._scan_hide.setSingleShot(True)
         self._scan_hide.setInterval(3000)
-        self._scan_hide.timeout.connect(lambda: (self.scan_l.setText(""), self.scan_l.setVisible(False)))
+        self._scan_hide.timeout.connect(self._drop_finished_tasks)
 
         def show_scan(t):
-            self.scan_l.setText(t)
-            self.scan_l.setVisible(bool(t))
-            if t and not t.startswith("Đang"):
-                self._scan_hide.start()                      # "Đã quét xong", "Đã dừng quét"…: tự ẩn sau 3 giây
+            low = t.lower()
+            key = "sync" if "đồng bộ" in low else ("free" if "giải phóng" in low else "scan")
+            if not t:
+                self.end_task(key)
             else:
-                self._scan_hide.stop()
+                self.set_task(key, t, final=not t.startswith("Đang"))
         self.ctx.scan_status.connect(show_scan)
         self.tools_b = QPushButton("Cài đặt")
         self.tools_b.setToolTip("Thư mục và quét, tài khoản, sao lưu, đồng bộ, cập nhật")
@@ -251,7 +252,8 @@ class MainWindow(QMainWindow):
         if sig == db.get_meta("backup_sig") or not backup.due(db.get_meta("backup_last"), days=1 / 24):      # chỉ sao lưu khi dữ liệu đã đổi, và cách lần trước ít nhất 1 giờ
             return
         self._bw = BackupWorker(db, db.get_meta("backup_dir"), db.get_meta("backup_vault", "1") == "1", int(db.get_meta("backup_keep", "5")))
-        self._bw.done.connect(lambda path, err: (db.set_meta("backup_last", time.time()), db.set_meta("backup_sig", sig)) if path else None)
+        self.set_task("backup", "Sao lưu dữ liệu…")
+        self._bw.done.connect(lambda path, err: (self.end_task("backup"), (db.set_meta("backup_last", time.time()), db.set_meta("backup_sig", sig)) if path else None))
         self._bw.start()
 
     def auto_refimg(self):
@@ -262,7 +264,8 @@ class MainWindow(QMainWindow):
             return
         from .pages import RefWorker
         self._rw = RefWorker(db)
-        self._rw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self.set_task("ref", "Tìm ảnh tham chiếu trên internet…")
+        self._rw.done.connect(lambda n: (self.end_task("ref"), self.ctx.changed.emit() if n else None))
         self._rw.start(QThread.LowPriority)
 
     def auto_bodies(self):
@@ -273,7 +276,8 @@ class MainWindow(QMainWindow):
             return
         from .pages import BodyWorker
         self._bdw = BodyWorker(db)
-        self._bdw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self.set_task("bodies", "Phát hiện người trong ảnh (đếm Mashup)…")
+        self._bdw.done.connect(lambda n: (self.end_task("bodies"), self.ctx.changed.emit() if n else None))
         self._bdw.start(QThread.LowPriority)
 
     def auto_cover_pool(self):
@@ -284,7 +288,8 @@ class MainWindow(QMainWindow):
             return
         from .pages import CoverPoolWorker
         self._cpw = CoverPoolWorker(self.ctx.db)
-        self._cpw.done.connect(lambda n: self.ctx.changed.emit() if n else None)
+        self.set_task("cover", "Làm sẵn ảnh profile…")
+        self._cpw.done.connect(lambda n: (self.end_task("cover"), self.ctx.changed.emit() if n else None))
         self._cpw.start(QThread.LowPriority)
 
     def ensure_sync_setup(self):
@@ -308,11 +313,11 @@ class MainWindow(QMainWindow):
         sig = db.library_sig()
         self._sw = SyncWorker(db, db.get_meta("sync_dir"), db.get_meta("sync_pw"), db.get_meta("sync_orig", "1") == "1",
                               self.ctx.vault if self.ctx.vault.unlocked() else None, self.ctx.zip_passwords)
-        if not quiet:
-            self._sw.progress.connect(lambda d, t, n: self.ctx.scan_status.emit(f"Đang đồng bộ {d}/{t}"))
-            self.ctx.scan_status.emit("Đang đồng bộ…")
+        self._sw.progress.connect(lambda d, t, n: self.set_task("sync", f"Đồng bộ với điện thoại {d}/{t}"))
+        self.set_task("sync", "Đồng bộ với điện thoại…")
 
         def done(st, err):
+            self.end_task("sync")
             try:
                 if st:
                     parts = []
@@ -394,7 +399,10 @@ class MainWindow(QMainWindow):
             return                                       # không chờ quét xong: chỉ xóa ảnh đã phân tích xong và đã có bản mã hóa giống hệt, nên chạy song song với quét vẫn an toàn
         from .pages import FreeWorker
         self._cw = FreeWorker(db, db.get_meta("sync_dir"), db.get_meta("sync_pw"), self.ctx.zip_passwords, min_age=1800)
+        self.set_task("free", "Giải phóng dung lượng PC…")
+
         def finished(st, err):
+            self.end_task("free")
             if not st:
                 return
             n_loose, n_arch = st.get("files", 0), st.get("arch_imgs", 0)
@@ -423,6 +431,30 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(2000, self.sync_after_scan)               # luồng quét còn đang kết thúc: thử lại sau chốc lát
             return
         self.start_sync(quiet=False)
+
+    # ---- danh sách tiến trình đang chạy (góc dưới bên phải) ----
+    def set_task(self, key, text, final=False):
+        self.tasks[key] = (text, final)
+        self._render_tasks()
+        if final:
+            self._scan_hide.start()                      # dòng kết quả tự ẩn sau 3 giây
+        elif not any(f for _, f in self.tasks.values()):
+            self._scan_hide.stop()
+
+    def end_task(self, key):
+        if self.tasks.pop(key, None) is not None:
+            self._render_tasks()
+
+    def _drop_finished_tasks(self):
+        for k in [k for k, (_, f) in self.tasks.items() if f]:
+            self.tasks.pop(k, None)
+        self._render_tasks()
+
+    def _render_tasks(self):
+        lines = [t for t, _ in self.tasks.values()]
+        self.scan_l.setText(lines[0] if len(lines) == 1 else "\n".join("• " + x for x in lines))
+        self.scan_l.setVisible(bool(lines))
+        self.scan_l.setToolTip("\n".join(lines))
 
     def busy(self):
         w = self.pages["settings"].worker

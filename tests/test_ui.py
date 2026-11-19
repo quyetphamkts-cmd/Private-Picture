@@ -1126,3 +1126,25 @@ def test_tab_bar_does_not_move_when_scan_text_changes(tmp_path, monkeypatch):
         ctx.scan_status.emit(t)
         QApplication.processEvents()
         assert w.nav.mapTo(w, w.nav.rect().topLeft()).x() == x0                     # chữ trạng thái đổi dài ngắn, các tab đứng yên
+
+
+def test_bottom_right_lists_all_running_tasks(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.ctx import AppContext
+    from pp.ui.main import MainWindow
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "tk"))
+    ctx = AppContext()
+    w = MainWindow(ctx)
+    w.show()
+    ctx.scan_status.emit("Đang quét 5/9")
+    w.set_task("cover", "Làm sẵn ảnh profile…")
+    w.set_task("sync", "Đồng bộ với điện thoại 3/10")
+    txt = w.scan_l.text()
+    assert "Đang quét 5/9" in txt and "Làm sẵn ảnh profile" in txt and "Đồng bộ với điện thoại 3/10" in txt and txt.count("•") == 3
+    w.end_task("cover")
+    assert "Làm sẵn" not in w.scan_l.text() and w.scan_l.isVisible()
+    w.end_task("sync")
+    ctx.scan_status.emit("Đã quét xong")
+    w._drop_finished_tasks()
+    assert not w.scan_l.isVisible()
