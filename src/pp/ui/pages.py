@@ -6,7 +6,7 @@ import time
 from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
 import numpy as np
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import (QApplication, QFrame, QScrollArea, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QPlainTextEdit, QApplication, QFrame, QScrollArea, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSlider, QStackedWidget,
                                QSizePolicy, QVBoxLayout, QWidget)
@@ -1153,7 +1153,7 @@ class MergeSuggestDialog(QDialog):
         self.reload()
 
 
-COL_STEPS = [5, 10, 20]     # các nấc số ảnh mỗi hàng của thanh trượt
+COL_STEPS = [20, 10, 5]     # các nấc số ảnh mỗi hàng của thanh trượt: từ trái sang phải thẻ NHỎ -> LỚN (20, 10, 5 thẻ mỗi hàng)
 THIGH_MAX_COLS = 0                    # (không còn dùng kiểu từ đùi lên)
 NAVEL_MAX_COLS = 10
 
@@ -1560,7 +1560,7 @@ class PeoplePage(Page):
         self.az_b.hide()                                       # (thay bằng hàng tab chữ cái)
         # (ô lọc màu tóc không hiện nữa: giữ ở mức "Tất cả")
         self.card_s = DotSlider(Qt.Horizontal)
-        self.card_s.setRange(0, len(COL_STEPS) - 1)             # nấc: 5, 10, 20 ảnh mỗi hàng; thẻ tự chia đều cho vừa chiều ngang
+        self.card_s.setRange(0, len(COL_STEPS) - 1)             # nấc: 20, 10, 5 ảnh mỗi hàng (nhỏ -> lớn); thẻ tự chia đều cho vừa chiều ngang
         self.card_s.setTickInterval(1)
         self.card_s.setTickPosition(QSlider.TicksBelow)
         self.card_s.setPageStep(1)
@@ -4001,7 +4001,14 @@ class AccountPage(Page):
         self.uw = None
         self.v.addWidget(self.status)
         self.v.addWidget(self.bar)
-        self.v.addStretch(1)
+        self.v.addWidget(QLabel("<b>Nhật ký sử dụng</b>  <span style='color:#A8A190'>(đồng bộ, giải phóng dung lượng… gần nhất ở trên)</span>"))
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(160)
+        self.log_view.setPlaceholderText("Chưa có hoạt động nào.")
+        self.v.addWidget(self.log_view, 1)
+        self.ctx.changed.connect(self.refresh_log)
+        self.refresh_log()
 
     def _scan_running(self):
         try:
@@ -4010,7 +4017,15 @@ class AccountPage(Page):
         except Exception:
             return False
 
+    def refresh_log(self):
+        try:
+            rows = self.ctx.db.activity(40)
+        except Exception:
+            return
+        self.log_view.setPlainText("\n".join(f"{time.strftime('%d/%m %H:%M', time.localtime(r['ts']))}   {r['text']}" for r in rows))
+
     def refresh(self):
+        self.refresh_log()
         if self.ctx.attached:
             self.sec_btns["pw"].setVisible(SEC.use_password)
             self.sec_btns["rec"].setVisible(SEC.mk is not None)

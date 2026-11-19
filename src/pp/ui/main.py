@@ -289,6 +289,23 @@ class MainWindow(QMainWindow):
             self.ctx.scan_status.emit("Đang đồng bộ…")
 
         def done(st, err):
+            try:
+                if st:
+                    parts = []
+                    if st.get("inbox"):
+                        parts.append(f"nhận {st['inbox']} thay đổi từ điện thoại")
+                    if st.get("thumbs") or st.get("orig"):
+                        parts.append(f"gửi {st.get('thumbs', 0)} ảnh nhỏ, {st.get('orig', 0)} ảnh gốc mới")
+                    if st.get("removed"):
+                        parts.append(f"dọn {st['removed']} tệp cũ trên Drive")
+                    if st.get("errors"):
+                        parts.append(f"{st['errors']} lỗi ghi tệp")
+                    if parts:
+                        db.log_activity("Đồng bộ: " + "; ".join(parts) + ". Danh mục mới đã sẵn sàng cho điện thoại.")
+                elif err and err != "Đã dừng":
+                    db.log_activity(f"Đồng bộ gặp lỗi: {err[:80]}")
+            except Exception:
+                pass
             if st:
                 db.set_meta("sync_last", time.time())
                 db.set_meta("sync_sig", sig)
@@ -354,6 +371,8 @@ class MainWindow(QMainWindow):
             parts = [f"{v} {names[k]}" for k, v in (st.get("why") or {}).items() if v and k in names]
             rep = time.strftime("%d/%m %H:%M") + f": đã giải phóng {n_loose} ảnh rời, {n_arch} ảnh trong tệp nén" + (". Chưa giải phóng: " + "; ".join(parts) if parts else "")
             self.ctx.db.set_meta("free_report", rep)
+            if n_loose or n_arch:
+                self.ctx.db.log_activity(f"Giải phóng PC: {n_loose} ảnh rời, {n_arch} ảnh trong tệp nén (đã có bản mã hóa giống hệt trên Drive).")
             if n_loose or n_arch:
                 self.ctx.db.snapshot()
                 self.ctx.scan_status.emit(f"Đã giải phóng PC: {n_loose} ảnh rời, {n_arch} ảnh trong tệp nén")

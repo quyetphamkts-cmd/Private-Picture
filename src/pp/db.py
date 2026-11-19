@@ -62,6 +62,7 @@ CREATE INDEX IF NOT EXISTS ix_ref_person ON person_ref(person_id);
 CREATE TABLE IF NOT EXISTS ref_state(person_id INTEGER PRIMARY KEY, ts REAL, n INTEGER, status TEXT);
 CREATE TABLE IF NOT EXISTS ref_flag(person_id INTEGER PRIMARY KEY, sim REAL, n INTEGER);
 CREATE TABLE IF NOT EXISTS person_candidates(person_id INTEGER, name TEXT, score REAL, PRIMARY KEY(person_id, name));
+CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, text TEXT);
 CREATE TABLE IF NOT EXISTS cover_render(face_id INTEGER PRIMARY KEY, person_id INTEGER, file TEXT, tried INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS ix_cover_render_p ON cover_render(person_id);
 CREATE TABLE IF NOT EXISTS cover_used(person_id INTEGER, kind TEXT, face_id INTEGER, PRIMARY KEY(person_id, kind, face_id));
@@ -273,6 +274,15 @@ class DB:
                      (SELECT id FROM faces WHERE person_id=p.id ORDER BY locked DESC, score*px DESC LIMIT 1))) cover_box
             FROM persons p WHERE p.hidden=? AND EXISTS(SELECT 1 FROM faces f WHERE f.person_id=p.id)
             ORDER BY (p.name IS NULL), n DESC""", (hidden,))
+
+    def log_activity(self, text):
+        """Nhật ký sử dụng (ngắn gọn): thời điểm và nội dung đã đồng bộ giữa PC và điện thoại, giải phóng dung lượng… Giữ 300 dòng gần nhất."""
+        import time as _t
+        self.x("INSERT INTO activity_log(ts,text) VALUES(?,?)", (_t.time(), text))
+        self.x("DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 300)")
+
+    def activity(self, limit=40):
+        return self.q("SELECT ts,text FROM activity_log ORDER BY id DESC LIMIT ?", (limit,))
 
     def toggle_favorite(self, pid):
         """Bật / tắt trái tim yêu thích của một người. Trả về trạng thái mới."""

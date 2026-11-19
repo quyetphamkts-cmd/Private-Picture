@@ -86,6 +86,7 @@ object Store {
         prefs = ctx.getSharedPreferences("pp_pending", Context.MODE_PRIVATE)
         favPrefs = ctx.getSharedPreferences("pp_fav", Context.MODE_PRIVATE)
         viewPrefs = ctx.getSharedPreferences("pp_view", Context.MODE_PRIVATE)
+        logPrefs = ctx.getSharedPreferences("pp_log", Context.MODE_PRIVATE)
         layout = viewPrefs.getString("layout", "day") ?: "day"
         showDates = viewPrefs.getBoolean("dates", true)
         posPrefs = ctx.getSharedPreferences("pp_pos", Context.MODE_PRIVATE)
@@ -94,6 +95,25 @@ object Store {
     }
 
     private lateinit var favPrefs: android.content.SharedPreferences
+    private lateinit var logPrefs: android.content.SharedPreferences
+
+    // ------------------------------------------------------------ nhật ký sử dụng: thời điểm và nội dung đã đồng bộ giữa điện thoại và PC (giữ 60 dòng gần nhất)
+    private val logLock = Any()
+    fun logActivity(text: String) = synchronized(logLock) {
+        try {
+            val arr = JSONArray(logPrefs.getString("log", "[]"))
+            val out = JSONArray()
+            out.put(JSONObject().put("ts", System.currentTimeMillis()).put("text", text))
+            for (i in 0 until minOf(arr.length(), 59)) out.put(arr.getJSONObject(i))
+            logPrefs.edit().putString("log", out.toString()).apply()
+        } catch (e: Exception) { }
+    }
+    fun activityLines(limit: Int = 30): List<Pair<Long, String>> = synchronized(logLock) {
+        try {
+            val arr = JSONArray(logPrefs.getString("log", "[]"))
+            (0 until minOf(arr.length(), limit)).map { arr.getJSONObject(it).let { o -> o.getLong("ts") to o.getString("text") } }
+        } catch (e: Exception) { emptyList() }
+    }
     private lateinit var posPrefs: android.content.SharedPreferences
 
     /** Vị trí danh sách người (chữ cái đang mở và vị trí cuộn từng chữ cái): nhớ khi đổi tab và cả khi khởi động lại app. */
@@ -236,6 +256,10 @@ object Store {
 
     private fun parse(j: JSONObject) {
         indexUpdatedMs = (j.optDouble("updated", 0.0) * 1000).toLong()
+        if (indexUpdatedMs > 0 && logPrefs.getLong("lastIdx", 0L) != indexUpdatedMs) {                // mỗi danh mục mới từ PC ghi một dòng nhật ký
+            logPrefs.edit().putLong("lastIdx", indexUpdatedMs).apply()
+            logActivity("Nhận dữ liệu từ PC (tạo lúc " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(indexUpdatedMs)) + "): " + j.getJSONArray("images").length() + " ảnh, " + j.getJSONArray("persons").length() + " người")
+        }
         val im = j.getJSONArray("images")
         val l = ArrayList<Img>()
         for (i in 0 until im.length()) {
@@ -549,7 +573,11 @@ object Store {
             // thao tác PC đã nhận (đã biến khỏi inbox) vẫn được giữ thêm 15 phút và áp dụng lên dữ liệu vừa tải: tránh nhìn thấy ảnh đã xác nhận "quay lại chưa xác nhận" khi tải về danh mục cũ hơn lúc PC xử lý xong
             val ak = acked
             val week = 7 * 24 * 3600 * 1000L
-            if (ak != null) l = l.filter { it.name !in ak && System.currentTimeMillis() - createdAt(it.name) < week }.toMutableList()      // bỏ thao tác khi PC đã xác nhận nhận (danh mục ghi rõ) hoặc quá 7 ngày: không còn đoán theo thời gian
+            if (ak != null) {
+                val got = l.count { it.sent && it.name in ak }
+                if (got > 0) logActivity("PC đã nhận $got lần gửi thay đổi từ điện thoại")
+                l = l.filter { it.name !in ak && System.currentTimeMillis() - createdAt(it.name) < week }.toMutableList()
+            }      // bỏ thao tác khi PC đã xác nhận nhận (danh mục ghi rõ) hoặc quá 7 ngày: không còn đoán theo thời gian
             else if (present != null) l = l.filter { !it.sent || it.name in present || System.currentTimeMillis() - createdAt(it.name) < 15 * 60 * 1000 }.toMutableList()
             savePending(l)
             l
@@ -576,10 +604,14 @@ object Store {
         p
     }
 
-    private fun markSent(name: String) = synchronized(pendLock) {
-        val list = loadPending()
-        list.firstOrNull { it.name == name }?.sent = true
-        savePending(list)
+    private fun markSent(name: String) {
+        var n = 0
+        synchronized(pendLock) {
+            val list = loadPending()
+            list.firstOrNull { it.name == name }?.let { it.sent = true; n = try { JSONArray(it.ops).length() } catch (e: Exception) { 0 } }
+            savePending(list)
+        }
+        if (n > 0) logActivity("Đã gửi $n thay đổi lên PC")
     }
 
     /** Tên tệp 'android-<mili giây>-<số>.pe': thời điểm tạo, dùng để giữ lại thao tác vừa được PC nhận trong một lúc. */

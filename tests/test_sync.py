@@ -448,3 +448,13 @@ def test_name_suggestion_published_and_cleared(lib, tmp_path):
     sync.run(db, dest, "pw", include_originals=False)
     assert db.one("SELECT name FROM persons WHERE id=?", (pids[0],))["name"] == "Lan Anh"
     assert not db.q("SELECT 1 FROM person_suggest WHERE person_id IN (?,?)", tuple(pids))
+
+
+def test_activity_log_keeps_recent_lines(tmp_path):
+    from pp.db import DB
+    db = DB(str(tmp_path / "a.db"))
+    for i in range(310):
+        db.log_activity(f"dong {i}")
+    rows = db.activity(5)
+    assert [r["text"] for r in rows] == ["dong 309", "dong 308", "dong 307", "dong 306", "dong 305"]
+    assert db.one("SELECT COUNT(*) c FROM activity_log")["c"] == 300

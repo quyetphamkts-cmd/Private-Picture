@@ -1754,6 +1754,18 @@ fun SettingsScreen() {
         Text("Danh mục từ máy tính tạo lúc: " + (if (upd > 0) java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(upd)) else "chưa có"), color = Color.Gray)
         val unsent = remember(v) { Store.unsentCount() }
         if (unsent > 0) Text("Thay đổi chờ gửi lên máy tính: $unsent (app tự thử gửi lại)", color = Color(0xFFE5C07B))
+        Text("Nhật ký sử dụng", color = Color(0xFFE5C07B), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        val lines = remember(v) { Store.activityLines(30) }
+        if (lines.isEmpty()) Text("Chưa có hoạt động nào.", color = Color.Gray, fontSize = 13.sp)
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f, fill = false)) {
+            items(lines.size) { i ->
+                val (ts, tx) = lines[i]
+                Row(Modifier.padding(vertical = 3.dp)) {
+                    Text(java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ts)), color = Color(0xFFA8A190), fontSize = 12.sp, modifier = Modifier.width(78.dp))
+                    Text(tx, color = Color(0xFFE6E0D2), fontSize = 13.sp)
+                }
+            }
+        }
     }
 }
 
