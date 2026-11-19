@@ -1080,3 +1080,31 @@ def test_library_grid_remembers_position(tmp_path, monkeypatch):
     pg2.set_items(items)
     QTest.qWait(120)
     assert pg2.grid.verticalScrollBar().value() > 1000
+
+
+def test_grouped_photos_remember_position(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import GroupedPhotos, Page
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "gpos"))
+    ctx = AppContext()
+    mk = lambda a, n: [{"id": a + i, "key": f"k{a + i}", "thumb": None, "w": 300, "h": 200} for i in range(n)]
+    groups = {"cloth": mk(1, 200), "nude": mk(1000, 100), "unclear": []}
+    g = GroupedPhotos(ctx, Page(ctx))
+    g.pos_key = "t"
+    g.resize(900, 600)
+    g.show()
+    g.set_groups(groups)
+    QTest.qWait(200)
+    g.scroll.verticalScrollBar().setValue(2500)
+    QTest.qWait(900)
+    assert int(ctx.db.get_meta("pos:t")) > 1
+    g2 = GroupedPhotos(ctx, Page(ctx))                                     # như mở lại ứng dụng
+    g2.pos_key = "t"
+    g2.resize(900, 600)
+    g2.show()
+    g2.set_groups(groups)
+    QTest.qWait(400)
+    assert g2.scroll.verticalScrollBar().value() > 1000

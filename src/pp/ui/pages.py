@@ -353,7 +353,7 @@ class PhotoGrid(QWidget):
         if self.bar is not None:
             lay.addWidget(self.bar)
         self.pos_key = None                          # đặt tên (ví dụ "all") thì nhớ vị trí cuộn: lần mở sau (kể cả mở lại ứng dụng) lưới về đúng chỗ đang xem
-        self._pos_restored = False
+        self._pos_done = None                        # khóa vị trí đã khôi phục (đổi khóa thì khôi phục lại)
         self._pos_t = QTimer(self)
         self._pos_t.setSingleShot(True)
         self._pos_t.setInterval(700)
@@ -520,8 +520,8 @@ class PhotoGrid(QWidget):
 
     def set_items(self, items):
         self.model.set_items(items)
-        if self.pos_key and not self._pos_restored and items:
-            self._pos_restored = True
+        if self.pos_key and self._pos_done != self.pos_key and items:
+            self._pos_done = self.pos_key
             QTimer.singleShot(0, self._restore_pos)
 
     def _top_id(self):
@@ -1362,6 +1362,11 @@ class GroupedPhotos(QWidget):
     def __init__(self, ctx, page, extra_actions=None, bar=True):
         super().__init__()
         self.ctx, self.page = ctx, page
+        self.pos_key, self._pos_done = None, None            # đặt khóa thì nhớ vị trí cuộn (ảnh đang ở mép trên), kể cả khi mở lại ứng dụng
+        self._pos_t = QTimer(self)
+        self._pos_t.setSingleShot(True)
+        self._pos_t.setInterval(700)
+        self._pos_t.timeout.connect(self._save_pos)
         self.parts = {}
         self.remove_fn = next((fn for n, fn in (extra_actions or []) if n.startswith("Không phải người này")), None)
         outer = QVBoxLayout(self)
@@ -1378,6 +1383,7 @@ class GroupedPhotos(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.verticalScrollBar().valueChanged.connect(lambda _: self._pos_t.start() if self.pos_key else None)
         outer.addWidget(self.scroll, 1)
         body = QWidget()
         lay = QVBoxLayout(body)
@@ -1453,6 +1459,37 @@ class GroupedPhotos(QWidget):
         m.addAction("Chọn tất cả", lambda: [pg.grid.select_all() for _, pg, _ in self.parts.values() if not pg.isHidden()])
         m.addAction("Bỏ chọn", self.clear_sel)
 
+    def _top_id(self):
+        """Mã ảnh đầu tiên đang nhìn thấy ở mép trên vùng cuộn (qua các cụm Dressed / Naked / Chưa phân loại)."""
+        v = self.scroll.verticalScrollBar().value()
+        for _, pg, _ in self.parts.values():
+            if pg.isHidden() or pg.y() + pg.height() <= v:
+                continue
+            local = max(0, v - pg.y())
+            for i, b in enumerate(getattr(pg.grid, "bottoms", [])):
+                if b > local and i < len(pg.model.items):
+                    return pg.model.items[i].get("id")
+        return None
+
+    def _save_pos(self):
+        try:
+            iid = self._top_id()
+            if iid is not None:
+                self.ctx.db.set_meta(f"pos:{self.pos_key}", str(iid))
+        except Exception:
+            pass
+
+    def _restore_pos(self):
+        try:
+            iid = int(self.ctx.db.get_meta(f"pos:{self.pos_key}", "0") or 0)
+            for _, pg, _ in self.parts.values():
+                for k, it in enumerate(pg.model.items):
+                    if it.get("id") == iid and k < len(pg.grid.rects):
+                        self.scroll.verticalScrollBar().setValue(int(pg.y() + pg.grid.rects[k][1]))
+                        return
+        except Exception:
+            pass
+
     def _zoom(self, h):
         for _, pg, _ in self.parts.values():
             pg.grid.blockSignals(True)
@@ -1475,6 +1512,9 @@ class GroupedPhotos(QWidget):
             pg.setVisible(bool(items))
         QTimer.singleShot(0, self.fit)
         self.fit()
+        if self.pos_key and self._pos_done != self.pos_key and any(groups.values()):
+            self._pos_done = self.pos_key
+            QTimer.singleShot(80, self._restore_pos)                  # sau khi các cụm dàn xong
 
     def fit(self):
         for lab, pg, _ in self.parts.values():
@@ -1524,6 +1564,7 @@ class ComboPage(Page):
             return
         rows = [r for r in self.ctx.db.images_by_ids(self.by_count.get(k, [])) if r["thumb"]]
         rows.sort(key=lambda r: r["taken"] or "", reverse=True)
+        self.grouped.pos_key = f"combo{k}"                         # nhớ vị trí đang xem của từng tab số người
         self.head.setText(f"{len(rows)} ảnh có {k} người")
         grp = {r["image_id"]: r["grp"] for r in self.ctx.db.q("SELECT image_id,grp FROM cloth_group WHERE grp IS NOT NULL")}
         man = {r["image_id"]: r["grp"] for r in self.ctx.db.q("SELECT image_id,grp FROM cloth_manual")}
@@ -2086,6 +2127,8 @@ class PeoplePage(Page):
         elif self.cloth_row.value:
             keep = clothing.ids_in_group(self.ctx.db, self.cloth_row.value)
             imgs = [x for x in imgs if x["id"] in keep]
+        self.photos.pos_key = f"p{self.pid}{self.cloth_row.value or ''}"        # nhớ vị trí đang xem của từng người (và từng bộ lọc)
+        self.grouped.pos_key = f"p{self.pid}"
         self.photos.set_items([img_item(x) for x in imgs])
         if self.cloth_row.value is None:
             grp = {r["image_id"]: r["grp"] for r in self.ctx.db.q("SELECT image_id,grp FROM cloth_group WHERE grp IS NOT NULL")}
