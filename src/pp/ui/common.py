@@ -270,19 +270,9 @@ class CardDelegate(QStyledItemDelegate):
 
 
 def _draw_heart(p, r, filled):
-    """Vẽ hình trái tim trong hình chữ nhật r (đầy màu khi đã yêu thích, chỉ viền khi chưa)."""
-    path = QPainterPath()
-    w, h, x, y = r.width(), r.height(), r.left(), r.top()
-    path.moveTo(x + w / 2, y + h)
-    path.cubicTo(x - w * 0.15, y + h * 0.55, x + w * 0.05, y - h * 0.15, x + w / 2, y + h * 0.28)
-    path.cubicTo(x + w * 0.95, y - h * 0.15, x + w * 1.15, y + h * 0.55, x + w / 2, y + h)
-    if filled:
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#FF5A6E"))
-    else:
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QColor("#FFFFFF"), 1.8))
-    p.drawPath(path)
+    """Trái tim dùng chung với mọi nơi khác (xem floatbar.draw_heart)."""
+    from .floatbar import draw_heart
+    draw_heart(p, r, filled)
 
 
 class CardView(QListView):
@@ -1095,18 +1085,9 @@ def tool_icon(kind, active=False):
         p.drawEllipse(QRectF(3.5, 3.5, 19, 19))
         p.drawLine(QPointF(13, 11.5), QPointF(13, 18.5))
         p.drawPoint(QPointF(13, 8))
-    elif kind in ("star", "star_on"):
-        import math
-        pts = []
-        for k in range(10):
-            r = 10 if k % 2 == 0 else 4.4
-            a = -math.pi / 2 + k * math.pi / 5
-            pts.append(QPointF(13 + r * math.cos(a), 13.5 + r * math.sin(a)))
-        from PySide6.QtGui import QPolygonF
-        poly = QPolygonF(pts)
-        if kind == "star_on":
-            p.setBrush(brass)
-        p.drawPolygon(poly)
+    elif kind in ("star", "star_on"):                  # cùng ngôi sao mập với nút sao ở trang xem ảnh
+        from .floatbar import draw_fat_star
+        draw_fat_star(p, QPointF(13, 13), 10, QColor(255, 208, 90) if kind == "star_on" else cream, filled=(kind == "star_on"))
     elif kind == "play":
         from PySide6.QtGui import QPolygonF
         p.drawPolygon(QPolygonF([QPointF(8, 5), QPointF(8, 21), QPointF(21, 13)]))

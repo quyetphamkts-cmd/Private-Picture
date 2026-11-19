@@ -149,6 +149,52 @@ def draw_fat_star(p, c, r, color, filled=True):
     p.drawPath(path)
 
 
+def draw_heart(p, r, filled, color=None):
+    """Trái tim mập như điện thoại, vẽ trong hình chữ nhật r: đầy màu hồng khi đã yêu thích, chỉ viền trắng khi chưa."""
+    path = QPainterPath()
+    w, h, x, y = r.width(), r.height(), r.left(), r.top()
+    path.moveTo(x + w / 2, y + h)
+    path.cubicTo(x - w * 0.15, y + h * 0.55, x + w * 0.05, y - h * 0.15, x + w / 2, y + h * 0.28)
+    path.cubicTo(x + w * 0.95, y - h * 0.15, x + w * 1.15, y + h * 0.55, x + w / 2, y + h)
+    if filled:
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(color or "#FF5A6E"))
+    else:
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(color or "#FFFFFF"), 1.8))
+    p.drawPath(path)
+
+
+def _icon_from(draw, size):
+    from PySide6.QtGui import QIcon, QPixmap
+    pm = QPixmap(size * 2, size * 2)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    draw(p, size * 2)
+    p.end()
+    return QIcon(pm)
+
+
+def heart_icon(size=18, filled=False, color="#FFFFFF"):
+    """Biểu tượng trái tim dùng chung (nút ♥ của hàng chữ cái…): cùng hình với thẻ người."""
+    return _icon_from(lambda p, n: draw_heart(p, QRectF(n * 0.15, n * 0.2, n * 0.7, n * 0.6), filled, color), size)
+
+
+def tick_icon(size=18, color="#FFFFFF"):
+    """Dấu ✓ vẽ bằng nét: cùng hình với nút ✓ của thanh nút tròn."""
+    def d(p, n):
+        pen = QPen(QColor(color), n * 0.09)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        path = QPainterPath(QPointF(n * 0.2, n * 0.52))
+        path.lineTo(n * 0.42, n * 0.74)
+        path.lineTo(n * 0.8, n * 0.28)
+        p.drawPath(path)
+    return _icon_from(d, size)
+
+
 class TopBar(QWidget):
     """Hàng trên cùng: nhóm nút trái, phần giữa (đúng giữa trang), nhóm nút phải. Nền trong suốt."""
 
@@ -348,8 +394,8 @@ class ClothPill(QWidget):
                             f"QPushButton:checked{{background:{theme.BRASS}}}")
             if key is None:
                 if third == "tick":
-                    b.setText("✓")
-                    b.setStyleSheet(b.styleSheet() + "QPushButton{font-size:20px}")
+                    b.setIcon(tick_icon(int(self.D * 0.55)))
+                    b.setIconSize(QSize(int(self.D * 0.55), int(self.D * 0.55)))
                     b.setToolTip("Xác nhận các ảnh đã chọn là của người này")
                 else:
                     b.setText("All")

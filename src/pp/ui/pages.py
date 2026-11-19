@@ -1235,7 +1235,12 @@ class LetterTabs(QScrollArea):
         row.setSpacing(4)
         self.btns = {}
         for ch in self.LETTERS:
-            b = QPushButton(ch)
+            b = QPushButton("" if ch == "♥" else ch)
+            if ch == "♥":
+                from .floatbar import heart_icon
+                from PySide6.QtCore import QSize as _QS
+                b.setIcon(heart_icon(18, True, "#FF5A6E"))              # trái tim vẽ cùng hình với thẻ người
+                b.setIconSize(_QS(18, 18))
             b.setCheckable(True)
             b.setFixedSize(44 if ch == "All" else 34, 32)
             b.setCursor(Qt.PointingHandCursor)
