@@ -1108,3 +1108,21 @@ def test_grouped_photos_remember_position(tmp_path, monkeypatch):
     g2.set_groups(groups)
     QTest.qWait(400)
     assert g2.scroll.verticalScrollBar().value() > 1000
+
+
+def test_tab_bar_does_not_move_when_scan_text_changes(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.ctx import AppContext
+    from pp.ui.main import MainWindow
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "tb"))
+    ctx = AppContext()
+    w = MainWindow(ctx)
+    w.resize(1200, 700)
+    w.show()
+    QApplication.processEvents()
+    x0 = w.nav.mapTo(w, w.nav.rect().topLeft()).x()
+    for t in ("Đang quét 5/9", "Đang phân tích ảnh không thấy mặt, chờ một chút nhé, còn rất nhiều ảnh", "Đã quét xong", ""):
+        ctx.scan_status.emit(t)
+        QApplication.processEvents()
+        assert w.nav.mapTo(w, w.nav.rect().topLeft()).x() == x0                     # chữ trạng thái đổi dài ngắn, các tab đứng yên

@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
         left.setSpacing(10)
         brand = QLabel("Private Picture")
         brand.setStyleSheet("color:#F6DDB4;font-size:14px;font-weight:700;background:transparent")
+        brand.setFixedWidth(240)                           # hai bên rộng bằng nhau và cố định: các tab ở giữa không bị đẩy khi chữ trạng thái đổi
         left.addWidget(brand)
         left.addStretch(1)
         self.nav = QListWidget()
@@ -76,10 +77,17 @@ class MainWindow(QMainWindow):
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left.addWidget(self.nav)
         left.addStretch(1)
+        self.right_box = QWidget()                         # khung phải CỐ ĐỊNH 240: chữ tiến độ quét ở đây co giãn thoải mái mà không đẩy các tab
+        self.right_box.setFixedWidth(240)
+        rb = QHBoxLayout(self.right_box)
+        rb.setContentsMargins(0, 0, 0, 0)
+        rb.setSpacing(8)
+        self.right_lay = rb
+        left.addWidget(self.right_box)
         if self.ctx.attached and self.ctx.has_password:
             lockb = QPushButton("🔒 Khóa")
             lockb.clicked.connect(self.lock_requested.emit)
-            left.addWidget(lockb)
+            rb.addWidget(lockb)
         self.stack = QStackedWidget()
         self.pages = {}
         self.keys = []
@@ -125,8 +133,10 @@ class MainWindow(QMainWindow):
         self.scan_l = QLabel("")                            # tiến độ quét ngầm, nhỏ, chỉ hiện khi đang quét
         self.scan_l.setStyleSheet("color:#D1A468;font-size:11px;padding:0 10px;background:transparent")
         self.scan_l.setWordWrap(True)
+        self.scan_l.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.scan_l.setVisible(False)
-        left.addWidget(self.scan_l)
+        self.scan_l.setMaximumHeight(52)
+        self.right_lay.insertWidget(0, self.scan_l, 1)
         self._scan_hide = QTimer(self)                      # thông báo kết quả hiện khoảng 3 giây rồi ẩn
         self._scan_hide.setSingleShot(True)
         self._scan_hide.setInterval(3000)
