@@ -199,28 +199,64 @@ def nav_icon(kind, size=20):
     return icon
 
 
+def draw_cloth(p, kind, w, color="#FFFFFF"):
+    """Vẽ biểu tượng Dressed (áo bơi dây cổ) hoặc Naked (dáng cơ thể) vào khung vuông w x w, ĐÚNG từng nét như trên điện thoại (cùng toạ độ theo tỉ lệ)."""
+    col = QColor(color)
+    cap = Qt.RoundCap
+
+    def pen(k):
+        q = QPen(col, w * k)
+        q.setCapStyle(cap)
+        q.setJoinStyle(Qt.RoundJoin)
+        return q
+
+    def path(x0, y0, *segs):
+        pa = QPainterPath(QPointF(w * x0, w * y0))
+        for sg in segs:
+            if len(sg) == 4:
+                pa.quadTo(w * sg[0], w * sg[1], w * sg[2], w * sg[3])
+            else:
+                pa.cubicTo(w * sg[0], w * sg[1], w * sg[2], w * sg[3], w * sg[4], w * sg[5])
+        return pa
+    if kind == "cloth":
+        cup_l = path(0.27, 0.50, (0.17, 0.66, 0.14, 0.80), (0.28, 0.89, 0.43, 0.80), (0.34, 0.62, 0.27, 0.50))
+        cup_r = path(0.73, 0.50, (0.83, 0.66, 0.86, 0.80), (0.72, 0.89, 0.57, 0.80), (0.66, 0.62, 0.73, 0.50))
+        cup_l.closeSubpath()
+        cup_r.closeSubpath()
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawPath(cup_l)
+        p.drawPath(cup_r)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(pen(0.05))
+        p.drawPath(path(0.5, 0.20, (0.40, 0.28, 0.31, 0.40, 0.27, 0.50)))
+        p.drawPath(path(0.5, 0.20, (0.60, 0.28, 0.69, 0.40, 0.73, 0.50)))
+        p.setPen(pen(0.04))
+        p.drawLine(QPointF(w * 0.43, w * 0.80), QPointF(w * 0.57, w * 0.80))
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawEllipse(QRectF(w * 0.40, w * 0.095, w * 0.10, w * 0.07))               # nút buộc: hai cánh
+        p.drawEllipse(QRectF(w * 0.50, w * 0.095, w * 0.10, w * 0.07))
+    else:
+        p.setBrush(Qt.NoBrush)
+        p.setPen(pen(0.06))
+        p.drawPath(path(0.44, 0.15, (0.20, 0.32, 0.13, 0.60, 0.40, 0.93)))
+        p.drawPath(path(0.56, 0.15, (0.80, 0.32, 0.87, 0.60, 0.60, 0.93)))
+        p.drawPath(path(0.31, 0.07, (0.41, 0.13, 0.36, 0.25)))
+        p.drawPath(path(0.69, 0.07, (0.59, 0.13, 0.64, 0.25)))
+        p.drawPath(path(0.22, 0.64, (0.46, 0.62, 0.50, 0.40)))
+        p.drawPath(path(0.78, 0.64, (0.54, 0.62, 0.50, 0.40)))
+        p.setPen(pen(0.05))
+        p.drawLine(QPointF(w * 0.5, w * 0.40), QPointF(w * 0.5, w * 0.96))
+
+
 def cloth_icon(kind, size=22, color="#FFFFFF"):
-    """Biểu tượng Dressed (áo bơi) và Naked (đường cong cơ thể) vẽ bằng nét, dùng trong ô dài Dressed | Naked | All."""
+    """Biểu tượng Dressed và Naked trong ô dài Dressed | Naked | All: vẽ bằng draw_cloth (giống hệt điện thoại)."""
     pm = QPixmap(size * 2, size * 2)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.scale(size * 2 / 24.0, size * 2 / 24.0)
-    p.setPen(_pen(color))
-    if kind == "cloth":
-        p.setBrush(QColor(color))
-        p.drawPolygon(QPolygonF([QPointF(7.5, 12.5), QPointF(4, 19), QPointF(10, 19.5)]))
-        p.drawPolygon(QPolygonF([QPointF(16.5, 12.5), QPointF(20, 19), QPointF(14, 19.5)]))
-        p.setBrush(Qt.NoBrush)
-        p.drawPolyline(QPolygonF([QPointF(12, 5), QPointF(8, 8.5), QPointF(7.5, 12.5)]))
-        p.drawPolyline(QPolygonF([QPointF(12, 5), QPointF(16, 8.5), QPointF(16.5, 12.5)]))
-    else:
-        p.setBrush(Qt.NoBrush)
-        left, right = QPainterPath(), QPainterPath()
-        left.moveTo(10.5, 4); left.cubicTo(5, 8, 3.5, 15, 10, 21.5)
-        right.moveTo(13.5, 4); right.cubicTo(19, 8, 20.5, 15, 14, 21.5)
-        p.drawPath(left)
-        p.drawPath(right)
+    draw_cloth(p, kind, size * 2, color)
     p.end()
     icon = QIcon()
     icon.addPixmap(pm)
