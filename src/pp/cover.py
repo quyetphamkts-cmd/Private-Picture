@@ -143,23 +143,26 @@ def pooled_bytes(db, fid, out_w=None):
     return b
 
 
-def navel_cached(db, fid, img_thumb_path, box, original=None, out_w=520, fetch=None):
-    """Như navel_bytes nhưng dùng ảnh đã làm sẵn nếu có (không phải đọc lại ảnh gốc)."""
+KIND = "thigh"            # ảnh profile LUÔN cắt từ GIỮA ĐÙI lên
+
+
+def profile_cached(db, fid, img_thumb_path, box, original=None, out_w=520, fetch=None):
+    """Ảnh profile (từ giữa đùi lên): dùng ảnh đã làm sẵn nếu có (không phải đọc lại ảnh gốc)."""
     if fid is not None:
         b = pooled_bytes(db, fid, out_w)
         if b:
             return b
-    return navel_bytes(img_thumb_path, box, original, out_w, fetch)
+    return thigh_bytes(img_thumb_path, box, original, out_w, fetch)
 
 
 def render_pool_item(db, row, fetch=None):
     """Làm sẵn một ảnh profile (cắt từ rốn lên) và lưu mã hóa. Trả về True nếu thành công."""
     box = (row["x"], row["y"], row["w"], row["h"])
-    b = navel_bytes(row["thumb"], box, row["path"], POOL_W, fetch)
+    b = thigh_bytes(row["thumb"], box, row["path"], POOL_W, fetch)
     if not b:
         db.x("INSERT OR REPLACE INTO cover_render(face_id,person_id,file,tried) VALUES(?,?,NULL,1)", (row["fid"], row["person_id"]))
         return False
-    path = str(_pool_dir() / f"{row['fid']}.jpg")
+    path = str(_pool_dir() / f"{row['fid']}-thigh.jpg")
     SEC.write_file(path, b)
     db.x("INSERT OR REPLACE INTO cover_render(face_id,person_id,file,tried) VALUES(?,?,?,1)", (row["fid"], row["person_id"], path))
     return True
@@ -170,7 +173,7 @@ def ensure_pool(db, stop=lambda: False, pause=lambda: None, fetch_for=None):
     của từng người (tối đa POOL_MAX). Trong mỗi người, ảnh đánh dấu sao được làm trước, rồi tới các ảnh thường. Ảnh hợp lệ = Naked, một người, nhìn thẳng thấy trọn mặt.
     Trả về số ảnh mới làm được."""
     from . import paths
-    for r in db.q("SELECT face_id, file FROM cover_render WHERE face_id NOT IN (SELECT id FROM faces)"):       # dọn ảnh của mặt đã biến mất
+    for r in db.q("SELECT face_id, file FROM cover_render WHERE face_id NOT IN (SELECT id FROM faces) OR (file IS NOT NULL AND file NOT LIKE '%-thigh.jpg')"):       # dọn ảnh của mặt đã biến mất và ảnh làm sẵn kiểu cũ (từ rốn lên)
         if r["file"]:
             try:
                 os.remove(r["file"])
@@ -179,7 +182,7 @@ def ensure_pool(db, stop=lambda: False, pause=lambda: None, fetch_for=None):
         db.x("DELETE FROM cover_render WHERE face_id=?", (r["face_id"],))
     todo = {}
     for p in db.q("SELECT id FROM persons WHERE hidden=0"):
-        cands = [dict(c, person_id=p["id"]) for c in db.cover_candidates(p["id"], "navel")][:POOL_MAX]
+        cands = [dict(c, person_id=p["id"]) for c in db.cover_candidates(p["id"], KIND)][:POOL_MAX]
         have = {r["face_id"] for r in db.q("SELECT face_id FROM cover_render WHERE person_id=? AND tried=1", (p["id"],))}
         done = sum(1 for c in cands if c["fid"] in have)
         pending = [c for c in cands if c["fid"] not in have]

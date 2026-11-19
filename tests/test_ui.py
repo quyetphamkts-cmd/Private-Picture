@@ -607,8 +607,8 @@ def test_cover_is_thigh_up_only_when_cards_are_large(tmp_path, monkeypatch):
                  (iid, .4, .15, .2, .12, .95, 80, vec_to_blob(np.ones(128, np.float32)), pid, "facethumb"))
     page = PeoplePage(ctx)
     page.refresh()
-    assert page.cols() == 10 and "navel" in page.pmodel.items[0]["key"] and "tbytes" in page.pmodel.items[0]      # mặc định 10 ảnh/hàng: từ rốn lên
-    for step, kind in ((0, "navel"), (1, "navel"), (2, "navel")):          # nấc 5, 10, 20: cùng một kiểu ảnh (từ rốn lên)
+    assert page.cols() == 10 and "thigh" in page.pmodel.items[0]["key"] and "tbytes" in page.pmodel.items[0]      # ảnh đại diện luôn từ giữa đùi lên
+    for step, kind in ((0, "thigh"), (1, "thigh"), (2, "thigh")):          # mọi nấc: cùng một kiểu ảnh (từ giữa đùi lên)
         page.card_s.setValue(step)
         from PySide6.QtTest import QTest
         QTest.qWait(200)                                            # nạp lại ảnh đại diện được dồn một lần sau khi ngừng kéo

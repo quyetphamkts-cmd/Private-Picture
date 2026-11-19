@@ -93,7 +93,7 @@ def publish_app(dest):
 
 
 def publish_covers(db, root, key, uids, persons):
-    """Ảnh profile mỗi người, tự động hoàn toàn: PC chọn ảnh theo nguyên tắc ảnh đại diện (Naked, đủ thân, nhìn thẳng, không lặp), cắt từ rốn lên bằng ảnh gốc
+    """Ảnh profile mỗi người, tự động hoàn toàn: PC chọn ảnh theo nguyên tắc ảnh đại diện (Naked, đủ thân, nhìn thẳng, không lặp), cắt từ giữa đùi lên bằng ảnh gốc
     (nét) rồi mã hóa đặt vào thư mục covers. Tệp tên '<mã người>-<chữ ký>.pe' nên khi PC đổi ảnh thì tên đổi, điện thoại chỉ tải tệp mới.
     Trả về {mã người: chữ ký} để ghi vào index."""
     from . import cover
@@ -102,7 +102,7 @@ def publish_covers(db, root, key, uids, persons):
     out, keep = {}, set()
     for p in persons:
         try:
-            c = db.cover_pick(p["id"], "navel")
+            c = db.cover_pick(p["id"], cover.KIND)
         except Exception:
             c = None
         if not c:                                                  # không có ảnh cá nhân nào dùng được: dùng khuôn mặt đã cắt sẵn của chính người đó (chỉ có đúng một người)
@@ -128,7 +128,7 @@ def publish_covers(db, root, key, uids, persons):
         name = f'{p["id"]}-{sig}.pe'
         path = os.path.join(d, name)
         if not os.path.exists(path):
-            b = cover.navel_cached(db, c["fid"], c["thumb"], box, c["path"], 420, lambda iid=c["iid"], pth=c["path"]: read_original_any(db, {"id": iid, "path": pth}))
+            b = cover.profile_cached(db, c["fid"], c["thumb"], box, c["path"], 420, lambda iid=c["iid"], pth=c["path"]: read_original_any(db, {"id": iid, "path": pth}))
             if not b:
                 continue
             _write(path, seal(key, b))

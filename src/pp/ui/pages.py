@@ -1217,7 +1217,7 @@ def _cover_cached(key, fn, th, box, original, out_w, fetch):
 
 
 def cover_kind(cols):
-    return "navel"                    # chỉ MỘT kiểu ảnh đại diện (từ rốn lên) cho mọi nấc: đổi nấc không phải cắt lại ảnh
+    return "thigh"                    # chỉ MỘT kiểu ảnh đại diện (từ giữa đùi lên) cho mọi nấc: đổi nấc không phải cắt lại ảnh
 
 
 class LetterTabs(QScrollArea):
@@ -1653,7 +1653,7 @@ class PeoplePage(Page):
         self.card_s.setTickPosition(QSlider.TicksBelow)
         self.card_s.setPageStep(1)
         self.card_s.setValue(COL_STEPS.index(10))
-        self._kind = cover_kind(10)                                # 3, 5 ảnh/hàng: từ đùi lên; 10: từ rốn lên
+        self._kind = cover_kind(10)                                # ảnh đại diện luôn từ giữa đùi lên
         self.card_s.setFixedWidth(110)
         self.card_s.setFixedHeight(24)
         self.card_s.valueChanged.connect(self.set_card_size_all)
@@ -1869,7 +1869,7 @@ class PeoplePage(Page):
                 if pick:                                                              # thẻ lớn: toàn thân (5–10/hàng), bán thân (15/hàng)
                     box = (pick["x"], pick["y"], pick["w"], pick["h"])
                     it.pop("thumb")
-                    fn = cover.thigh_bytes if self._kind == "thigh" else (lambda th, b, op, ow, fe, db=self.ctx.db, fid=pick["fid"]: cover.navel_cached(db, fid, th, b, op, ow, fe))      # ảnh đã làm sẵn khi máy rảnh thì dùng ngay
+                    fn = (lambda th, b, op, ow, fe, db=self.ctx.db, fid=pick["fid"]: cover.profile_cached(db, fid, th, b, op, ow, fe))      # ảnh đã làm sẵn khi máy rảnh thì dùng ngay
                     ow = COVER_W.get(self.cols(), 520)
                     it["key"] = f"p{p['id']}{self._kind}{ow}{pick['thumb']}{box}"
                     ckey = it["key"]
