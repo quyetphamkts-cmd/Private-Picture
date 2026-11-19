@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QPlainTextEdit, QApplication, QFrame, QScrollArea, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSlider, QStackedWidget,
+                               QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSlider, QSpinBox, QStackedWidget,
                                QSizePolicy, QVBoxLayout, QWidget)
 
 from .. import scan as _scan_mod
@@ -3343,18 +3343,62 @@ def scan_summary(db, r, stopped=False, auto=False):
 
 
 class BackupWorker(QThread):
+    """Sao lưu tới nơi đang chọn (mặc định thư mục PrivatePicture-Backup trong Google Drive), mã hóa bằng khóa đồng bộ nếu có."""
     done = Signal(str, str)         # đường dẫn tệp (hoặc ""), lỗi (hoặc "")
+    progress = Signal(int, int, str)
 
-    def __init__(self, db, dest, include_vault, keep):
+    def __init__(self, db, dest=None, include_vault=None, keep=None):
         super().__init__()
         self.db, self.dest, self.include_vault, self.keep = db, dest, include_vault, keep
 
     def run(self):
         from .. import backup
+        db = self.db
         try:
-            self.done.emit(backup.make_backup(self.db, self.dest, self.include_vault, self.keep), "")
+            dest, where = (self.dest, "folder") if self.dest else backup.target(db)
+            if not dest:
+                raise backup.BackupError(where)
+            key, salt = backup.sync_key(db)
+            vault = db.get_meta("backup_vault", "1") == "1" if self.include_vault is None else self.include_vault
+            keep = int(db.get_meta("backup_keep", "3")) if self.keep is None else self.keep
+            path = backup.make_backup(db, dest, vault, keep, key, salt, lambda k, t, n: self.progress.emit(k, t, n))
+            if where == "drive":
+                backup.clean_legacy(db.get_meta("backup_dir") if db.get_meta("backup_place") == "folder" else None)
+            self.done.emit(path, "")
         except Exception as e:
             self.done.emit("", str(e))
+
+
+class BackupRestoreWorker(QThread):
+    """Khôi phục: (1) đọc thông tin bản sao lưu, hoặc (2) sao lưu dữ liệu hiện tại để phòng rồi giải nén bản đã chọn vào thư mục chờ."""
+    info = Signal(object, str)
+    progress = Signal(int, int, str)
+    done = Signal(object, str)
+
+    def __init__(self, db, path, key, stage=False):
+        super().__init__()
+        self.db, self.path, self.key, self.stage = db, path, key, stage
+
+    def run(self):
+        from .. import backup
+        try:
+            if not self.stage:
+                self.info.emit(backup.read_info(self.path, self.key), "")
+                return
+            safety = ""
+            dest, _ = backup.target(self.db)
+            if dest:                                   # chụp lại dữ liệu hiện tại trước, phòng khi chọn nhầm bản
+                self.progress.emit(0, 0, "Sao lưu dữ liệu hiện tại trước khi khôi phục…")
+                key, salt = backup.sync_key(self.db)
+                have = len([f for f in os.listdir(dest) if backup.PATTERN.match(f)]) if os.path.isdir(dest) else 0
+                keep = max(int(self.db.get_meta("backup_keep", "3")), have + 1)     # lần này không xoay vòng: bản sắp khôi phục không bị xóa mất
+                safety = backup.make_backup(self.db, dest, self.db.get_meta("backup_vault", "1") == "1", keep, key, salt)
+            info = backup.stage_restore(self.path, self.key, lambda k, t, n: self.progress.emit(k, t, n))
+            self.done.emit(dict(info, safety=safety), "")
+        except WrongPassword:
+            (self.done if self.stage else self.info).emit(None, "wrong")
+        except Exception as e:
+            (self.done if self.stage else self.info).emit(None, str(e))
 
 
 class SyncWorker(QThread):
@@ -3913,57 +3957,72 @@ class SyncDialog(QDialog):
 
 
 class BackupDialog(QDialog):
-    """Sao lưu vào một thư mục, ví dụ thư mục Google Drive (Drive for Desktop) hay OneDrive đồng bộ trên máy."""
+    """Sao lưu và khôi phục. Mặc định lưu vào thư mục PrivatePicture-Backup trong Google Drive (cạnh thư mục đồng bộ điện thoại),
+    mã hóa bằng mật khẩu đồng bộ; có danh sách các bản đã lưu và nút khôi phục."""
 
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
-        self.ctx, self.worker = ctx, None
-        self.setWindowTitle("Sao lưu dữ liệu")
-        self.setMinimumWidth(620)
+        from .. import backup
+        self.ctx, self.worker, self.rw = ctx, None, None
+        self.setWindowTitle("Sao lưu và khôi phục")
+        self.setMinimumWidth(680)
         db = ctx.db
         l = QVBoxLayout(self)
-        l.addWidget(QLabel("<h2 style='margin:0'>Sao lưu dữ liệu</h2>"))
-        info = QLabel("Chọn một thư mục để lưu các bản sao lưu (tệp .zip). Muốn đưa lên <b>Google Drive</b>: cài Google Drive cho máy tính, "
-                      "rồi chọn một thư mục nằm trong ổ Drive (ví dụ <i>G:\\My Drive\\PrivatePicture-backup</i>), Drive sẽ tự đồng bộ lên mạng. "
-                      "OneDrive hoạt động tương tự.")
+        l.addWidget(QLabel("<h2 style='margin:0'>Sao lưu và khôi phục</h2>"))
+        info = QLabel("Bản sao lưu gồm tên người, nhãn, phân loại, ảnh thu nhỏ, dữ liệu phân tích và (nếu chọn) Kho mã hóa. "
+                      "Ảnh ở thư mục mức “giữ ảnh gốc tại chỗ” vẫn nằm ở thư mục của bạn, không nằm trong bản sao lưu.")
         info.setWordWrap(True)
         l.addWidget(info)
+
+        self.grp = QButtonGroup(self)
+        self.r_drive = QRadioButton()
+        self.r_folder = QRadioButton("Thư mục khác:")
+        self.grp.addButton(self.r_drive)
+        self.grp.addButton(self.r_folder)
+        drow = QHBoxLayout()
+        drow.addWidget(self.r_drive, 1)
+        self.setup_drive = QPushButton("Thiết lập Drive…")
+        self.setup_drive.clicked.connect(self.open_sync)
+        drow.addWidget(self.setup_drive)
+        l.addLayout(drow)
         row = QHBoxLayout()
-        from pathlib import Path
-        self.dir = QLineEdit(db.get_meta("backup_dir", str(Path.home() / "Documents" / "PrivatePicture-backup")))
+        row.addWidget(self.r_folder)
+        self.dir = QLineEdit(db.get_meta("backup_dir") or "")
+        self.dir.setPlaceholderText("ví dụ D:\\PrivatePicture-backup")
         pick = QPushButton("Chọn…")
         pick.clicked.connect(self.pick)
         row.addWidget(self.dir, 1)
         row.addWidget(pick)
         l.addLayout(row)
-        self.vault = QCheckBox("Gồm cả Kho mã hóa (ảnh đã mã hóa; có thể rất nặng)")
+        (self.r_folder if db.get_meta("backup_place", "drive") == "folder" else self.r_drive).setChecked(True)
+        self.dir.textEdited.connect(lambda _: self.r_folder.setChecked(True))
+
+        self.vault = QCheckBox("Gồm cả Kho mã hóa (ảnh gốc đã mã hóa vào kho; có thể rất nặng)")
         self.vault.setChecked(db.get_meta("backup_vault", "1") == "1")
         l.addWidget(self.vault)
         kr = QHBoxLayout()
         kr.addWidget(QLabel("Giữ lại"))
         self.keep = QSpinBox()
-        self.keep.setRange(1, 50)
-        self.keep.setValue(int(db.get_meta("backup_keep", "5")))
+        self.keep.setRange(1, 30)
+        self.keep.setValue(int(db.get_meta("backup_keep", "3")))
         kr.addWidget(self.keep)
-        kr.addWidget(QLabel("bản sao lưu gần nhất"))
+        kr.addWidget(QLabel("bản gần nhất"))
         kr.addStretch(1)
         l.addLayout(kr)
-        self.auto = QCheckBox("Tự động sao lưu mỗi 7 ngày khi mở ứng dụng")
-        self.auto.setChecked(db.get_meta("backup_auto", "0") == "1")
+        self.auto = QCheckBox("Tự động sao lưu mỗi ngày một lần (khi dữ liệu có thay đổi)")
+        self.auto.setChecked(db.get_meta("backup_auto", "1") == "1")
         l.addWidget(self.auto)
-        last = db.get_meta("backup_last")
-        if last:
-            import time
-            l.addWidget(QLabel("Lần sao lưu gần nhất: " + time.strftime("%d/%m/%Y %H:%M", time.localtime(float(last)))))
-        warn = QLabel()
-        warn.setWordWrap(True)
-        if ctx.encrypted:
-            warn.setText("Bản sao lưu giữ nguyên mã hóa: người khác lấy được tệp cũng không đọc được nếu không có mật khẩu hoặc khóa khôi phục. "
-                         "Khóa API và mã truy cập cập nhật không được đưa vào bản sao lưu. Ảnh ở thư mục mức “giữ ảnh gốc” không nằm trong bản sao lưu này.")
-        else:
-            warn.setText("<span style='color:#b03a2e'>Bạn đang tắt mã hóa dữ liệu: bản sao lưu sẽ KHÔNG được mã hóa (gồm tên người, nhãn, ảnh thu nhỏ). "
-                         "Nếu lưu lên Drive, Google có thể đọc được. Hãy bật mã hóa trong “Thay đổi bảo mật…” trước khi đưa lên mạng.</span>")
-        l.addWidget(warn)
+        self.sec = QLabel()
+        self.sec.setWordWrap(True)
+        l.addWidget(self.sec)
+
+        l.addWidget(QLabel("<b>Các bản sao lưu</b> (chọn một bản rồi bấm Khôi phục)"))
+        self.list = QListWidget()
+        self.list.setMinimumHeight(150)
+        self.list.itemSelectionChanged.connect(lambda: self.restore_b.setEnabled(bool(self.list.selectedItems()) and not self.busy()))
+        self.list.itemDoubleClicked.connect(lambda _: self.restore())
+        l.addWidget(self.list, 1)
+
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
         self.bar.setVisible(False)
@@ -3972,59 +4031,242 @@ class BackupDialog(QDialog):
         self.status.setWordWrap(True)
         l.addWidget(self.status)
         row = QHBoxLayout()
+        self.restore_b = QPushButton("Khôi phục bản đã chọn…")
+        self.restore_b.setEnabled(False)
+        self.restore_b.clicked.connect(self.restore)
+        opn = QPushButton("Mở thư mục")
+        opn.clicked.connect(self.open_dir)
         self.go = QPushButton("Sao lưu ngay")
         self.go.setProperty("primary", True)
         self.go.clicked.connect(self.start)
-        save = QPushButton("Lưu cài đặt")
-        save.clicked.connect(lambda: (self.save(), self.accept()))
         close = QPushButton("Đóng")
         close.clicked.connect(self.reject)
+        row.addWidget(self.restore_b)
+        row.addWidget(opn)
         row.addStretch(1)
-        for b in (close, save, self.go):
+        for b in (close, self.go):
             row.addWidget(b)
         l.addLayout(row)
+        self.grp.buttonToggled.connect(lambda *_: self.refresh())
+        self.refresh()
+
+    # ---- trạng thái ----
+    def busy(self):
+        return bool((self.worker and self.worker.isRunning()) or (self.rw and self.rw.isRunning()))
+
+    def refresh(self):
+        from .. import backup
+        db = self.ctx.db
+        d = backup.drive_dir(db)
+        if d:
+            ok = os.path.isdir(os.path.dirname(d))
+            self.r_drive.setText(f"Google Drive (khuyên dùng): {d}" + ("" if ok else "  — chưa thấy ổ Drive, hãy mở Google Drive cho máy tính"))
+            self.setup_drive.setVisible(False)
+        else:
+            self.r_drive.setText("Google Drive (khuyên dùng): chưa thiết lập")
+            self.setup_drive.setVisible(True)
+        key, _ = backup.sync_key(db)
+        if key is not None:
+            self.sec.setStyleSheet("color:#2e7d32")
+            self.sec.setText("Bản sao lưu được mã hóa (AES-256) bằng mật khẩu đồng bộ điện thoại: Google và người khác không đọc được. "
+                             "Khóa API và mã truy cập cập nhật không nằm trong bản sao lưu.")
+        else:
+            self.sec.setStyleSheet("color:#b03a2e")
+            self.sec.setText("Chưa thiết lập mật khẩu đồng bộ: bản sao lưu sẽ KHÔNG được mã hóa riêng"
+                             + ("" if self.ctx.encrypted else " và dữ liệu đang tắt mã hóa (tên người, nhãn, ảnh thu nhỏ đọc được)")
+                             + ". Hãy bấm “Thiết lập Drive…” trước khi lưu lên mạng.")
+        self.fill()
+
+    def places(self):
+        from .. import backup
+        db = self.ctx.db
+        out = [(backup.drive_dir(db), "Google Drive")]
+        if (db.get_meta("backup_dir") or "").strip():
+            out.append((db.get_meta("backup_dir").strip(), "Thư mục"))
+        if self.dir.text().strip():
+            out.append((self.dir.text().strip(), "Thư mục"))
+        out.append((str(backup.legacy_dir()), "Tài liệu (ổ C:)"))
+        return out
+
+    def fill(self):
+        from .. import backup
+        self.list.clear()
+        for b in backup.list_backups(self.places()):
+            it = QListWidgetItem(f"{time.strftime('%d/%m/%Y  %H:%M', time.localtime(b['when']))}   ·   {b['size'] / 1048576:,.0f} MB   ·   {b['where']}")
+            it.setData(Qt.UserRole, b["path"])
+            it.setToolTip(b["path"])
+            self.list.addItem(it)
+        if not self.list.count():
+            it = QListWidgetItem("Chưa có bản sao lưu nào.")
+            it.setFlags(Qt.NoItemFlags)
+            self.list.addItem(it)
+        last = self.ctx.db.get_meta("backup_last")
+        if last and not self.busy():
+            self.status.setStyleSheet("")
+            self.status.setText("Lần sao lưu gần nhất: " + time.strftime("%d/%m/%Y %H:%M", time.localtime(float(last))))
+
+    def open_sync(self):
+        SyncDialog(self.ctx, self).exec()
+        self.refresh()
 
     def pick(self):
         d = QFileDialog.getExistingDirectory(self, "Thư mục lưu bản sao lưu", self.dir.text())
         if d:
             self.dir.setText(d)
+            self.r_folder.setChecked(True)
+            self.refresh()
+
+    def open_dir(self):
+        from .. import backup
+        self.save()
+        d, _ = backup.target(self.ctx.db)
+        if d:
+            os.makedirs(d, exist_ok=True)
+            try:
+                os.startfile(d)
+            except (AttributeError, OSError):
+                reveal(d)
 
     def save(self):
         db = self.ctx.db
-        db.set_meta("backup_dir", self.dir.text().strip())
+        db.set_meta("backup_place", "folder" if self.r_folder.isChecked() else "drive")
+        if self.dir.text().strip():
+            db.set_meta("backup_dir", self.dir.text().strip())
         db.set_meta("backup_vault", "1" if self.vault.isChecked() else "0")
         db.set_meta("backup_keep", self.keep.value())
         db.set_meta("backup_auto", "1" if self.auto.isChecked() else "0")
 
-    def start(self):
-        if not self.dir.text().strip():
-            self.status.setText("Hãy chọn thư mục lưu.")
-            return
-        self.save()
-        self.worker = BackupWorker(self.ctx.db, self.dir.text().strip(), self.vault.isChecked(), self.keep.value())
-        self.worker.done.connect(self.on_done)
-        self.go.setEnabled(False)
-        self.bar.setVisible(True)
+    def set_busy(self, on, text=""):
+        self.bar.setVisible(on)
+        self.bar.setRange(0, 0)
+        self.go.setEnabled(not on)
+        self.restore_b.setEnabled(not on and bool(self.list.selectedItems()))
         self.status.setStyleSheet("")
-        self.status.setText("Đang sao lưu…")
+        self.status.setText(text)
+
+    def on_progress(self, k, t, name):
+        if t:
+            self.bar.setRange(0, t)
+            self.bar.setValue(k)
+        elif name:
+            self.status.setText(name)
+
+    # ---- sao lưu ----
+    def start(self):
+        from .. import backup
+        self.save()
+        d, why = backup.target(self.ctx.db)
+        if not d:
+            self.status.setStyleSheet("color:#c0392b")
+            self.status.setText(why)
+            return
+        self.worker = BackupWorker(self.ctx.db)
+        self.worker.progress.connect(self.on_progress)
+        self.worker.done.connect(self.on_done)
+        self.set_busy(True, "Đang sao lưu…")
         self.worker.start()
 
     def on_done(self, path, err):
-        import time
-        self.bar.setVisible(False)
-        self.go.setEnabled(True)
+        self.set_busy(False)
         if err:
             self.status.setStyleSheet("color:#c0392b")
             self.status.setText("Không sao lưu được: " + err)
             return
-        self.ctx.db.set_meta("backup_last", time.time())
-        mb = os.path.getsize(path) / 1048576
+        db = self.ctx.db
+        db.set_meta("backup_last", time.time())
+        db.set_meta("backup_sig", db.library_sig())
+        self.fill()
         self.status.setStyleSheet("color:#2e7d32")
-        self.status.setText(f"Đã sao lưu ({mb:.1f} MB):\n{path}")
+        self.status.setText(f"Đã sao lưu ({os.path.getsize(path) / 1048576:,.1f} MB):\n{path}")
+
+    # ---- khôi phục ----
+    def restore(self):
+        items = self.list.selectedItems()
+        path = items[0].data(Qt.UserRole) if items else None
+        if not path or self.busy():
+            return
+        from .. import backup
+        self.key, _ = backup.sync_key(self.ctx.db)
+        self.path = path
+        self.ask_info()
+
+    def ask_info(self):
+        self.rw = BackupRestoreWorker(self.ctx.db, self.path, self.key)
+        self.rw.info.connect(self.on_info)
+        self.set_busy(True, "Đang đọc bản sao lưu (Drive có thể cần tải tệp về trước)…")
+        self.rw.start()
+
+    def on_info(self, info, err):
+        from .. import backup
+        self.set_busy(False)
+        if err == "wrong":
+            try:
+                head = backup.header(self.path)
+            except Exception as e:
+                self.status.setStyleSheet("color:#c0392b")
+                self.status.setText(f"Không đọc được bản sao lưu: {e}")
+                return
+            pw, ok = QInputDialog.getText(self, "Mật khẩu bản sao lưu",
+                                          "Bản sao lưu này được mã hóa bằng một mật khẩu đồng bộ khác (hoặc của máy khác).\n"
+                                          "Nhập mật khẩu đồng bộ lúc đó, hoặc khóa khôi phục:", QLineEdit.Password)
+            if not ok or not pw:
+                return
+            try:
+                self.key = backup.key_for(head, pw)
+            except WrongPassword:
+                self.status.setStyleSheet("color:#c0392b")
+                self.status.setText("Sai mật khẩu hoặc khóa khôi phục.")
+                return
+            self.ask_info()
+            return
+        if err:
+            self.status.setStyleSheet("color:#c0392b")
+            self.status.setText("Không đọc được bản sao lưu: " + err)
+            return
+        when = time.strftime("%d/%m/%Y %H:%M", time.localtime(info.get("created") or os.path.getmtime(self.path)))
+        detail = (f"{info['images']:,} ảnh · {info['persons']:,} người đã đặt tên · {info['labels']:,} nhãn ({info['labeled']:,} ảnh gắn nhãn)"
+                  + (f" · {info['vault']:,} ảnh trong kho" if info.get("vault") else "")) if "images" in info else "bản sao lưu kiểu cũ"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Khôi phục bản sao lưu")
+        box.setText(f"Khôi phục bản sao lưu ngày {when}?\n{detail}")
+        box.setInformativeText("Dữ liệu hiện tại của app (tên người, nhãn, phân loại...) sẽ được thay bằng bản này. Trước khi thay, app tự sao lưu "
+                               "dữ liệu hiện tại để bạn có thể quay lại. Ảnh gốc trong các thư mục của bạn không bị đụng tới.\n\n"
+                               "Sau khi khôi phục, app sẽ đóng và tự mở lại. Nếu bản sao lưu dùng mật khẩu đăng nhập cũ, hãy dùng mật khẩu lúc đó.")
+        go = box.addButton("Khôi phục", QMessageBox.AcceptRole)
+        box.addButton("Hủy", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+        self.rw = BackupRestoreWorker(self.ctx.db, self.path, self.key, stage=True)
+        self.rw.progress.connect(self.on_progress)
+        self.rw.done.connect(self.on_staged)
+        self.set_busy(True, "Đang chuẩn bị khôi phục…")
+        self.rw.start()
+
+    def on_staged(self, info, err):
+        self.set_busy(False)
+        if err:
+            self.status.setStyleSheet("color:#c0392b")
+            self.status.setText("Không khôi phục được: " + ("sai mật khẩu." if err == "wrong" else err))
+            return
+        QMessageBox.information(self, "Khôi phục", "Đã chuẩn bị xong. App sẽ đóng và tự mở lại để hoàn tất khôi phục."
+                                + (f"\n\nDữ liệu trước khi khôi phục đã được sao lưu tại:\n{info['safety']}" if info.get("safety") else ""))
+        self.accept()
+        w = self.ctx_window()
+        if w is not None:
+            w.restart_app()
+
+    def ctx_window(self):
+        p = self.parent()
+        while p is not None and not hasattr(p, "restart_app"):
+            p = p.parent()
+        return p
 
     def reject(self):
-        if self.worker and self.worker.isRunning():
+        if self.busy():
             return
+        self.save()
         super().reject()
 
 

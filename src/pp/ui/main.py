@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ctx = ctx or AppContext()
         self.locking = False
+        self.restart_after = False
         from .. import __version__
         self.setWindowTitle(f"Private Picture  v{__version__}")
         # kích thước theo màn hình đang dùng (không tràn), cho phép thu nhỏ; nội dung từng trang cuộn được khi cửa sổ nhỏ
@@ -226,7 +227,7 @@ class MainWindow(QMainWindow):
         self._chg_t.setSingleShot(True)
         self._chg_t.timeout.connect(self.sync_if_changed)
         self.ctx.changed.connect(lambda: self._chg_t.start(10000))
-        self._bak_t = QTimer(self)                          # sao lưu: mỗi 10 phút xem dữ liệu có đổi không, có thì sao lưu (tối đa mỗi giờ một bản)
+        self._bak_t = QTimer(self)                          # sao lưu: mỗi 10 phút xem dữ liệu có đổi không, có thì sao lưu (tối đa mỗi ngày một bản)
         self._bak_t.setInterval(10 * 60 * 1000)
         self._bak_t.timeout.connect(self.auto_backup)
         self._bak_t.start()
@@ -244,15 +245,14 @@ class MainWindow(QMainWindow):
         db = self.ctx.db
         if db.get_meta("backup_auto", "1") != "1" or (self._bw and self._bw.isRunning()):
             return
-        if not db.get_meta("backup_dir"):                          # sao lưu hoàn toàn tự động: chưa chọn nơi lưu thì dùng thư mục mặc định trong Tài liệu
-            from pathlib import Path
-            db.set_meta("backup_dir", str(Path.home() / "Documents" / "PrivatePicture-backup"))
         from .. import backup
-        sig = db.library_sig()
-        if sig == db.get_meta("backup_sig") or not backup.due(db.get_meta("backup_last"), days=1 / 24):      # chỉ sao lưu khi dữ liệu đã đổi, và cách lần trước ít nhất 1 giờ
+        if not backup.target(db)[0]:                                # chưa có Google Drive (chưa thiết lập đồng bộ) và chưa chọn thư mục khác: chưa sao lưu
             return
-        self._bw = BackupWorker(db, db.get_meta("backup_dir"), db.get_meta("backup_vault", "1") == "1", int(db.get_meta("backup_keep", "5")))
-        self.set_task("backup", "Sao lưu dữ liệu…")
+        sig = db.library_sig()
+        if sig == db.get_meta("backup_sig") or not backup.due(db.get_meta("backup_last"), days=1):      # chỉ sao lưu khi dữ liệu đã đổi, mỗi ngày tối đa một bản
+            return
+        self._bw = BackupWorker(db)
+        self.set_task("backup", "Sao lưu dữ liệu lên Google Drive…" if backup.target(db)[1] == "drive" else "Sao lưu dữ liệu…")
         self._bw.done.connect(lambda path, err: (self.end_task("backup"), (db.set_meta("backup_last", time.time()), db.set_meta("backup_sig", sig)) if path else None))
         self._bw.start()
 
@@ -597,14 +597,31 @@ class MainWindow(QMainWindow):
         self.ctx.shutdown()
         super().closeEvent(e)
         src = getattr(self, "pending_update", None)
-        if src and not self.locking:                       # bản mới đã tải sẵn ở nền: cài khi người dùng thoát app, không mở lại
+        if src and not self.locking and not self.restart_after:      # bản mới đã tải sẵn ở nền: cài khi người dùng thoát app, không mở lại (khởi động lại để khôi phục thì để lần thoát sau)
             try:
                 from .. import updater
                 updater.apply(src, restart=False)
             except Exception:
                 pass
+        if self.restart_after:
+            _relaunch()
         if not self.locking:
             QApplication.quit()
+
+    def restart_app(self):
+        """Đóng app (lưu dữ liệu như bình thường) rồi mở lại: dùng sau khi chuẩn bị khôi phục bản sao lưu."""
+        self.restart_after = True
+        self.close()
+
+
+def _relaunch():
+    """Mở lại chính app này (bản đóng gói hoặc chạy từ mã nguồn); bản mới đợi bản cũ thoát hẳn rồi mới chạy."""
+    from PySide6.QtCore import QProcess
+    if getattr(sys, "frozen", False):
+        QProcess.startDetached(sys.executable, ["--after-restore"])
+    else:
+        main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "main.py")
+        QProcess.startDetached(sys.executable, [main_py, "--after-restore"])
 
 
 class Controller(QObject):
@@ -662,9 +679,24 @@ class Controller(QObject):
             if old_plain and SEC.key:          # đã có dữ liệu chưa mã hóa từ trước: mã hóa luôn
                 migrate.run(None, SEC.key)
         elif not self.login():
+            if self._offer_undo_restore("Bạn chưa đăng nhập được vào dữ liệu vừa khôi phục (bản sao lưu dùng mật khẩu lúc sao lưu)."):
+                return self.start()
             self.app.quit()
             return
         self.open_main()
+
+    def _offer_undo_restore(self, why):
+        """Vừa khôi phục bản sao lưu mà không mở được: hỏi có quay lại dữ liệu trước khi khôi phục không. True nếu đã quay lại."""
+        from .. import backup
+        if not backup.pending_old():
+            return False
+        if QMessageBox.question(None, "Khôi phục", why + "\n\nQuay lại dữ liệu như trước khi khôi phục?") != QMessageBox.Yes:
+            return False
+        try:
+            return backup.undo_restore()
+        except Exception as e:
+            QMessageBox.warning(None, "Khôi phục", f"Không quay lại được: {e}")
+            return False
 
     def login(self):
         """Mở khóa theo cấu hình. Trả về False nếu người dùng thoát."""
@@ -693,9 +725,18 @@ class Controller(QObject):
             if SEC.key:
                 vault.use_key(SEC.key)
         except Exception as ex:
+            if self._offer_undo_restore(f"Không mở được dữ liệu vừa khôi phục:\n{ex}"):
+                SEC.lock()
+                return self.start()
             QMessageBox.critical(None, "Không mở được dữ liệu", f"{ex}")
             self.app.quit()
             return
+        from .. import backup
+        done = backup.pending_old()
+        if done:                                                # khôi phục thành công: bỏ dữ liệu cũ đã cất, báo cho người dùng
+            backup.finish_restore()
+            when = time.strftime("%d/%m/%Y %H:%M", time.localtime(done["created"])) if done.get("created") else ""
+            QTimer.singleShot(1500, lambda: QMessageBox.information(self.win, "Khôi phục", f"Đã khôi phục bản sao lưu {when}."))
         self.win = MainWindow(AppContext(db, vault, attached=True))
         self.win.lock_requested.connect(self.lock)
         self.win.ctx.security_change.connect(self.change_security)
@@ -767,12 +808,31 @@ class Controller(QObject):
         self.open_main()
 
 
-def _single_instance(name="PrivatePicture-instance"):
+def _apply_restore():
+    """Có bản khôi phục đang chờ (đã giải nén ở lần chạy trước): đưa vào chỗ dữ liệu trước khi mở cơ sở dữ liệu."""
+    from .. import backup
+    err = None
+    for _ in range(10):
+        try:
+            return backup.apply_staged()
+        except OSError as e:                                # tệp còn bị khóa một chút sau khi bản cũ thoát: thử lại
+            err = e
+            time.sleep(1)
+        except Exception as e:
+            err = e
+            break
+    QMessageBox.warning(None, "Khôi phục", "Chưa khôi phục được bản sao lưu (dữ liệu hiện tại giữ nguyên, sẽ thử lại lần mở app sau):\n" + str(err))
+
+
+def _single_instance(name="PrivatePicture-instance", notify=True):
     """Chỉ cho chạy MỘT cửa sổ ứng dụng: nếu đã có bản đang chạy thì đưa nó lên trước rồi thoát bản mới. Trả về máy chủ cục bộ (giữ tham chiếu) hoặc None."""
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
     sock = QLocalSocket()
     sock.connectToServer(name)
     if sock.waitForConnected(400):
+        if not notify:
+            sock.disconnectFromServer()
+            return None
         sock.write(b"show")
         sock.flush()
         sock.waitForBytesWritten(400)
@@ -804,8 +864,15 @@ def run():
     except Exception:
         pass
     server = _single_instance()
+    if server is None and "--after-restore" in sys.argv:    # mở lại sau khi chuẩn bị khôi phục: đợi bản cũ lưu dữ liệu và thoát hẳn
+        for _ in range(60):
+            time.sleep(0.5)
+            server = _single_instance(notify=False)
+            if server is not None:
+                break
     if server is None:
         os._exit(0)                                         # đã có một cửa sổ đang chạy
+    _apply_restore()
     theme.apply(app)
     ctl = Controller(app)
 
