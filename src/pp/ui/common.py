@@ -342,6 +342,14 @@ def selected_items(view):
 
 
 # ====================================================================== lưới ảnh giữ tỉ lệ gốc
+FAV_IDS = set()          # mã các ảnh đã gắn ngôi sao Yêu thích (để vẽ ngôi sao nhỏ ở góc ảnh trong lưới, giống điện thoại)
+
+
+def set_fav_ids(ids):
+    FAV_IDS.clear()
+    FAV_IDS.update(ids)
+
+
 class JustifiedView(QAbstractScrollArea):
     """Lưới ảnh xếp hàng đều như thư viện ảnh: mỗi ảnh giữ đúng tỉ lệ gốc (không cắt, không méo).
     Chỉ vẽ phần đang nhìn thấy nên dùng được cho hàng chục nghìn ảnh."""
@@ -355,6 +363,7 @@ class JustifiedView(QAbstractScrollArea):
 
     def __init__(self, model, row_h=190, gap=6):
         super().__init__()
+        self.show_stars = True                               # tab Favorite tắt (ở đó ảnh nào cũng đã có sao)
         self.m, self.row_h, self.gap = model, row_h, gap
         self.rects, self.bottoms = [], []
         self.total_h = 0
@@ -660,6 +669,16 @@ class JustifiedView(QAbstractScrollArea):
                 p.drawPixmap(QPointF(r.left(), r.bottom() - 7), cbl)
                 p.drawPixmap(QPointF(r.right() - 7, r.bottom() - 7), cbr)
             self._circle(p, r, i in self.sel, strong=(i == self.hover or self.multi or i in self.sel))
+            if self.show_stars and w > 60 and it.get("id") in FAV_IDS:                  # ảnh đã gắn sao: ngôi sao mập vàng trong hình tròn tối, cạnh ô chọn
+                p.save()
+                p.setRenderHint(QPainter.Antialiasing)
+                sc = QPointF(r.left() + 46, r.top() + 20)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(0, 0, 0, 102))
+                p.drawEllipse(sc, 11, 11)
+                from .floatbar import draw_fat_star
+                draw_fat_star(p, sc, 6.2, QColor(255, 208, 90))
+                p.restore()
             if i in self.sel or i == self.cur and self.hasFocus():
                 p.setPen(QPen(QColor(theme.BRASS), 3 if i in self.sel else 2))
                 p.setBrush(Qt.NoBrush)

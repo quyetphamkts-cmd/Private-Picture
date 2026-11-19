@@ -176,6 +176,8 @@ def _viewer_fav(ctx, it, toggle):
         else:
             db.x("INSERT OR IGNORE INTO label_images VALUES(?,?)", (lid, iid))
         has = not has
+        from .common import FAV_IDS
+        (FAV_IDS.add if has else FAV_IDS.discard)(iid)                  # sao ở góc ảnh trong lưới cập nhật ngay
     return has
 
 
@@ -798,7 +800,7 @@ class OverlayHost(QWidget):
 
     def _place(self):
         for w in self._floaters:
-            w.move((self.width() - w.width()) // 2, self.height() - w.height() - 18)
+            w.move((self.width() - w.width()) // 2, self.height() - w.height() - int(0.25 * w.height()))       # cách thanh tab phía dưới 0,25 lần đường kính nút
             w.raise_()
 
     def resizeEvent(self, e):
@@ -991,6 +993,7 @@ class LibraryPage(Page):
         self.cloth = ClothPill("Lọc ảnh: Dressed / Naked / All")
         self.cloth.changed.connect(self.refresh)
         self.grid = PhotoGrid(ctx, self)
+        self.grid.grid.show_stars = not getattr(self, "fav_only", False)              # tab Favorite: ảnh nào cũng đã có sao nên không vẽ
         self.grid.pos_key = "fav" if getattr(self, "fav_only", False) else "all"         # nhớ vị trí đang xem của All / Favorite
         self.cloth.intercept = lambda key: self.grid.classify_selected(key)       # đang chọn ảnh: Dressed / Naked phân loại luôn các ảnh đã chọn
         self.grid.bar.set_center(self.cloth)

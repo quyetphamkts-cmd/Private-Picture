@@ -511,6 +511,8 @@ class MainWindow(QMainWindow):
                 self._combo_sig = sig
             combos = self._combo_cache
             favs = db.one("SELECT COUNT(*) c FROM label_images WHERE label_id=(SELECT id FROM labels WHERE name='Yêu thích')")["c"]
+            from .common import set_fav_ids
+            set_fav_ids(r["image_id"] for r in db.q("SELECT image_id FROM label_images WHERE label_id=(SELECT id FROM labels WHERE name='Yêu thích')"))
         except Exception:
             return
         for row, key in self.rowkey.items():
