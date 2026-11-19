@@ -670,8 +670,10 @@ def test_people_toolbar_fits_narrow_window_and_slider_snaps(tmp_path, monkeypatc
     ctx = AppContext()
     page = PeoplePage(ctx)
     assert page.stack.widget(0).minimumSizeHint().width() <= 470                  # thanh lọc không ép trang rộng hơn cửa sổ hẹp
-    assert page.card_s.maximum() == 2 and page.cols() == 10                         # các nấc 5, 10, 20
+    assert page.card_s.maximum() == 2 and page.cols() == 10                         # các nấc 20, 10, 5 ảnh mỗi hàng: từ trái sang phải thẻ nhỏ -> lớn
     page.card_s.setValue(0)
+    assert page.cols() == 20
+    page.card_s.setValue(2)
     assert page.cols() == 5
 
 
