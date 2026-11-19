@@ -458,3 +458,20 @@ def test_activity_log_keeps_recent_lines(tmp_path):
     rows = db.activity(5)
     assert [r["text"] for r in rows] == ["dong 309", "dong 308", "dong 307", "dong 306", "dong 305"]
     assert db.one("SELECT COUNT(*) c FROM activity_log")["c"] == 300
+
+
+def test_auto_changes_do_not_make_phone_edits_look_stale(tmp_path):
+    """Bước tự động của app (gom mặt, đoán tên…) không được ghi dấu 'sửa gần nhất': thao tác thật của điện thoại làm trước đó vẫn được PC nhận."""
+    import time as _t
+    from pp.db import DB
+    db = DB(str(tmp_path / "au.db"))
+    pid = db.x("INSERT INTO persons(name) VALUES('A')").lastrowid
+    iid = db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES('/a.jpg',1,1,9,9,'t')").lastrowid
+    db.x("INSERT INTO person_guess(image_id,person_id,score,state) VALUES(?,?,0.9,0)", (iid, pid))
+    phone_ts = _t.time() - 5
+    with db.auto_edits():
+        db.x("UPDATE person_guess SET score=0.8, state=1 WHERE image_id=?", (iid,))
+        db.x("UPDATE person_guess SET state=0 WHERE image_id=?", (iid,))
+    assert sync._newer(db, f"pimg:{pid}|{iid}", phone_ts)                    # PC chưa có sửa tay nào: thao tác điện thoại được nhận
+    db.x("UPDATE person_guess SET state=2 WHERE image_id=?", (iid,))         # người dùng tự sửa trên PC SAU thao tác điện thoại: PC giữ bản mới hơn
+    assert not sync._newer(db, f"pimg:{pid}|{iid}", phone_ts)

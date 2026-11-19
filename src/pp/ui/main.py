@@ -314,6 +314,14 @@ class MainWindow(QMainWindow):
                         parts.append(f"dọn {st['removed']} tệp cũ trên Drive")
                     if st.get("errors"):
                         parts.append(f"{st['errors']} lỗi ghi tệp")
+                    from .. import sync as _sy
+                    if _sy.SKIPS["stale"] or _sy.SKIPS["image"]:
+                        sk = []
+                        if _sy.SKIPS["stale"]:
+                            sk.append(f"{_sy.SKIPS['stale']} thay đổi cũ hơn lần sửa trên PC (PC giữ bản mới hơn)")
+                        if _sy.SKIPS["image"]:
+                            sk.append(f"{_sy.SKIPS['image']} thay đổi cho ảnh chưa có trên PC (sẽ thử lại)")
+                        db.log_activity("Bỏ qua: " + "; ".join(sk) + ".")
                     if parts:
                         db.log_activity("Đồng bộ: " + "; ".join(parts) + ". Danh mục mới đã sẵn sàng cho điện thoại.")
                 elif err and err != "Đã dừng":

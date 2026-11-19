@@ -4,6 +4,17 @@ import numpy as np
 
 from .db import blob_to_vec, vec_to_blob
 
+
+def auto_edit(fn):
+    """Bước TỰ ĐỘNG của app (không phải người dùng sửa): thay đổi trong đó không ghi dấu thời gian 'sửa gần nhất' (xem DB.auto_edits)."""
+    import functools
+
+    @functools.wraps(fn)
+    def w(db, *a, **k):
+        with db.auto_edits():
+            return fn(db, *a, **k)
+    return w
+
 FACE_THR = 0.45      # độ giống trung bình để gộp hai nhóm (0.363 của OpenCV dành cho so khớp 1-1, quá lỏng khi gom hàng nghìn ảnh)
 MIN_FACE_PX = 40     # mặt nhỏ hơn thế này (điểm ảnh) quá mờ để gom đáng tin
 
@@ -306,6 +317,7 @@ def archive_names(arch, known=None):
     return names
 
 
+@auto_edit
 def infer_names(db, min_arch=2, min_img=3, min_side=2, auto=False, auto_arch=3, auto_img=8):
     """Suy đoán tên cho các nhóm mặt CHƯA có tên, thận trọng vì một tệp nén có thể chứa nhiều người (kể cả người không ghi tên):
     - mỗi tệp: bỏ các tên đã có người riêng trong tệp (từ 2 ảnh), còn lại là 'tên chưa ai nhận' của tệp đó;
@@ -384,6 +396,7 @@ def infer_names(db, min_arch=2, min_img=3, min_side=2, auto=False, auto_arch=3, 
     return out
 
 
+@auto_edit
 def demote_extra_names(db):
     """Một ảnh chỉ có MỘT người (một khuôn mặt, đã thuộc một người) thì chỉ mang MỘT tên: tên khác do app tự gán thêm (đề xuất đã nhận từ tên tệp nén...) chuyển thành
     tên DỰ PHÒNG (đề xuất chưa xác nhận); chỉ khi người dùng bảo tên đầu không đúng thì mới tính tới tên dự phòng. Ảnh có nhiều người thì giữ nhiều tên.
@@ -395,6 +408,7 @@ def demote_extra_names(db):
     return cur.rowcount or 0
 
 
+@auto_edit
 def claim_single_name_archives(db):
     """Tệp nén chỉ mang tên MỘT người: coi toàn bộ ảnh trong tệp là của người đó (kể cả ảnh không thấy mặt hoặc mặt không khớp rõ).
     Ảnh nào người dùng đã loại khỏi người này (state=1) thì tôn trọng, không thêm lại. Trả về số ảnh được thêm."""
@@ -633,6 +647,7 @@ def photo_combos(db, min_photos=2, min_person_imgs=2):
     return sorted(out, key=lambda c: (-c["n"], c["names"]))
 
 
+@auto_edit
 def apply_refs(db, warn_thr=0.30, name_thr=0.50, boost=0.10, min_faces=5):
     """Dùng ảnh tham chiếu (vectơ lấy từ internet, bảng person_ref) để: (1) cảnh báo nhóm mang tên X mà khuôn mặt (trung vị) khác xa ảnh tham chiếu của X,
     (2) gợi ý tên cho nhóm chưa có tên giống ảnh tham chiếu của một người đã biết, (3) tăng độ chắc cho đề xuất có khuôn mặt khớp ảnh tham chiếu.
@@ -679,6 +694,7 @@ def apply_refs(db, warn_thr=0.30, name_thr=0.50, boost=0.10, min_faces=5):
     return flags, suggested
 
 
+@auto_edit
 def infer_candidates(db, top=3, min_imgs=2):
     """Với người chưa có tên mà app CHƯA đủ chắc để đề xuất (không có trong person_suggest): liệt kê tối đa `top` tên có khả năng nhất để người dùng xem ảnh rồi chọn.
     Căn cứ: các tên ghi trên tệp nén chứa ảnh của người đó (trừ tên đã có người riêng trong tệp); mỗi tệp chia đều điểm cho các tên còn lại, cộng dồn theo số ảnh.
@@ -765,6 +781,7 @@ def infer_names_by_photo(db, min_imgs=3, agree=0.8):
     return made
 
 
+@auto_edit
 def assign_by_session(db, gap_min=40, min_known=3, dominance=0.8, share=0.35, floor=0.62):
     """Chia ảnh thành các BUỔI CHỤP (cùng thư mục hoặc tệp nén, giờ chụp liên tiếp cách nhau không quá gap_min phút) rồi gợi ý người cho các ảnh
     chưa rõ người trong buổi đó, như Google Ảnh: nếu phần lớn ảnh đã nhận ra của buổi là cùng một người (từ `dominance` trở lên) thì ảnh còn lại
@@ -872,6 +889,7 @@ def archive_coverage(db):
     return out
 
 
+@auto_edit
 def seed_from_archives(db):
     """Ảnh trong file nén có tên người thì mặc định là của người đó.
     - Tên file khớp người đã có (không phân biệt dấu, hoa thường; kèm số hoặc chữ khác cũng được); một file có thể mang NHIỀU tên người.
@@ -990,6 +1008,7 @@ def seed_from_archives(db):
     return done
 
 
+@auto_edit
 def cluster_incremental(db):
     """Cập nhật NHẸ sau khi quét nền ít ảnh mới: gán tên theo tệp nén, sửa mặt gán nhầm, gán mặt mới cho người đã biết; không gom lại cả thư viện
     (mặt hoàn toàn lạ chờ lần gom đầy đủ). Trả về số mặt mới còn chưa xếp vào người nào."""
@@ -1039,6 +1058,7 @@ NAMED_MARGIN = 0.04      # người đã đặt tên tốt nhất phải hơn ng
 RECONCILE_MARGIN = 0.08
 
 
+@auto_edit
 def reconcile_named(db):
     """Sửa các mặt đã bị khóa NHẦM vào người có tên (do gom sai trước khi đặt tên, hoặc do tên tệp nén gán nhầm) khi có thêm bằng chứng:
     mỗi mặt chưa do người dùng tự chỉnh tay được so với mặt mẫu của chính người đó (bỏ chính nó) và của các người có tên khác;
@@ -1095,6 +1115,7 @@ def reconcile_named(db):
     return fixed
 
 
+@auto_edit
 def attach_to_named(db, min_px=MIN_FACE_PX):
     """Tự gán khuôn mặt (ảnh mới lẫn ảnh cũ) cho NGƯỜI ĐÃ ĐẶT TÊN: so từng mặt với hồ sơ của mọi người có tên (mặt đã khóa và hồ sơ đã lưu,
     kể cả khi ảnh của họ đã bị xóa), lấy trung bình 5 mặt mẫu giống nhất nên người có nhiều kiểu ảnh (nghiêng, tuổi, ánh sáng) vẫn nhận ra.
@@ -1163,6 +1184,7 @@ def _profile_rows(db, dim, have_locked):
     return out
 
 
+@auto_edit
 def cluster_faces(db, thr=None, min_px=MIN_FACE_PX):
     """Gom khuôn mặt theo người, chặt chẽ hơn trước:
     - so khuôn mặt (SFace) kết hợp màu da, màu tóc; liên kết trung bình để không nối nhầm hai người;
@@ -1413,6 +1435,7 @@ def rename_person(db, pid, name):
         db.x("DELETE FROM persons WHERE id NOT IN (SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL) AND name IS NULL")
 
 
+@auto_edit
 def merge_same_name(db):
     """Hai người đã đặt TÊN GIỐNG HỆT (không phân biệt dấu, hoa thường) là cùng một người: gộp vào nhóm có nhiều ảnh hơn.
     (Trước đây hai người đã có tên không bao giờ tự gộp nên cùng tên vẫn ra hai nhóm.) Trả về số nhóm đã gộp."""
@@ -1462,6 +1485,7 @@ def remove_from_person(db, pid, image_ids):
     reassign_faces(db, fids)
 
 
+@auto_edit
 def reassign_faces(db, face_ids):
     """Gán lại từng mặt (đang không thuộc ai) cho người giống nhất, trừ những người đã bị loại cho mặt đó và người đã có mặt trong cùng ảnh."""
     if not face_ids:
@@ -1501,6 +1525,7 @@ def reassign_faces(db, face_ids):
     return n
 
 
+@auto_edit
 def enforce_rejects(db):
     """Sau khi gom lại: mặt nào lại rơi vào người đã bị loại cho nó thì đưa ra và tìm người khác."""
     rows = db.q("SELECT f.id id FROM faces f JOIN face_reject r ON r.face_id=f.id AND r.person_id=f.person_id")
@@ -1601,6 +1626,7 @@ def _ts(s):
         return None
 
 
+@auto_edit
 def guess_faceless(db, presence=None, min_score=0.6, margin=0.04, max_ref=40):
     """Với ảnh KHÔNG thấy mặt: so với các ảnh đã biết của từng người theo nội dung (CLIP: không gian, ánh sáng, trang phục),
     màu và độ sáng, độ nét, và NGÀY GIỜ chụp. Ghi gợi ý vào bảng person_guess để người dùng xác nhận.
@@ -1693,6 +1719,7 @@ def _clip_refs(db, pid, max_ref=40):
     return np.stack(ms) if ms else None
 
 
+@auto_edit
 def assign_by_sequence(db, strong_gap=6, max_gap=12, floor=0.62, auto_floor=0.68):
     """File nén mang NHIỀU tên: ảnh của một người thường nằm liền nhau. Với ảnh chưa gán được bằng khuôn mặt (không có mặt, chụp từ phía sau,
     mặt quá nhỏ/nghiêng), dựa vào các ảnh đã nhận diện chắc chắn ở hai phía:

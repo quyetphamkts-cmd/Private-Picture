@@ -31,21 +31,23 @@ CREATE INDEX IF NOT EXISTS ix_guess_person ON person_guess(person_id, state);
 CREATE INDEX IF NOT EXISTS ix_label_img ON label_images(image_id);
 CREATE TABLE IF NOT EXISTS face_attr(face_id INTEGER PRIMARY KEY, sk_l REAL, sk_a REAL, sk_b REAL, hr_l REAL, hr_a REAL, hr_b REAL, sharp REAL);
 CREATE TABLE IF NOT EXISTS edit_ts(k TEXT PRIMARY KEY, ts REAL);
-CREATE TRIGGER IF NOT EXISTS t_lm_ins AFTER INSERT ON label_images BEGIN
+CREATE TABLE IF NOT EXISTS edit_mode(id INTEGER PRIMARY KEY, auto INTEGER);          -- auto=1: đang chạy bước tự động của app (gom mặt, đoán tên…): KHÔNG ghi dấu 'người dùng vừa sửa'
+INSERT OR IGNORE INTO edit_mode VALUES(1, 0);
+CREATE TRIGGER IF NOT EXISTS t_lm_ins AFTER INSERT ON label_images WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('lm:'||NEW.label_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_lm_del AFTER DELETE ON label_images BEGIN
+CREATE TRIGGER IF NOT EXISTS t_lm_del AFTER DELETE ON label_images WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('lm:'||OLD.label_id||'|'||OLD.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_label_upd AFTER UPDATE OF name ON labels BEGIN
+CREATE TRIGGER IF NOT EXISTS t_label_upd AFTER UPDATE OF name ON labels WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('label:'||NEW.id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_label_del AFTER DELETE ON labels BEGIN
+CREATE TRIGGER IF NOT EXISTS t_label_del AFTER DELETE ON labels WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('label:'||OLD.id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_pname AFTER UPDATE OF name ON persons BEGIN
+CREATE TRIGGER IF NOT EXISTS t_pname AFTER UPDATE OF name ON persons WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('pname:'||NEW.id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_phide AFTER UPDATE OF hidden ON persons BEGIN
+CREATE TRIGGER IF NOT EXISTS t_phide AFTER UPDATE OF hidden ON persons WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('person:'||NEW.id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_pdel AFTER DELETE ON persons BEGIN
+CREATE TRIGGER IF NOT EXISTS t_pdel AFTER DELETE ON persons WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('person:'||OLD.id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_pimg AFTER UPDATE OF person_id ON faces WHEN OLD.person_id IS NOT NULL AND OLD.person_id IS NOT NEW.person_id BEGIN
+CREATE TRIGGER IF NOT EXISTS t_pimg AFTER UPDATE OF person_id ON faces WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 AND OLD.person_id IS NOT NULL AND OLD.person_id IS NOT NEW.person_id BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||OLD.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
 CREATE TABLE IF NOT EXISTS label_auto(label_id INTEGER, image_id INTEGER, ts REAL, PRIMARY KEY(label_id,image_id));
 CREATE TABLE IF NOT EXISTS label_reject(label_id INTEGER, image_id INTEGER, PRIMARY KEY(label_id,image_id));
@@ -68,17 +70,17 @@ CREATE INDEX IF NOT EXISTS ix_cover_render_p ON cover_render(person_id);
 CREATE TABLE IF NOT EXISTS cover_used(person_id INTEGER, kind TEXT, face_id INTEGER, PRIMARY KEY(person_id, kind, face_id));
 CREATE TABLE IF NOT EXISTS cloth_manual(image_id INTEGER PRIMARY KEY, grp TEXT);
 CREATE TABLE IF NOT EXISTS inbox_done(name TEXT PRIMARY KEY, ts REAL);             -- tên các tệp thao tác của điện thoại PC đã xử lý: đưa vào danh mục để điện thoại biết chắc thao tác nào đã được nhận
-CREATE TRIGGER IF NOT EXISTS t_cloth_ins AFTER INSERT ON cloth_manual BEGIN
+CREATE TRIGGER IF NOT EXISTS t_cloth_ins AFTER INSERT ON cloth_manual WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_cloth_upd AFTER UPDATE ON cloth_manual BEGIN
+CREATE TRIGGER IF NOT EXISTS t_cloth_upd AFTER UPDATE ON cloth_manual WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_cloth_del AFTER DELETE ON cloth_manual BEGIN
+CREATE TRIGGER IF NOT EXISTS t_cloth_del AFTER DELETE ON cloth_manual WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('cloth:'||OLD.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_guess_upd AFTER UPDATE OF state ON person_guess BEGIN
+CREATE TRIGGER IF NOT EXISTS t_guess_upd AFTER UPDATE OF state ON person_guess WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_guess_ins AFTER INSERT ON person_guess WHEN NEW.state<>0 BEGIN
+CREATE TRIGGER IF NOT EXISTS t_guess_ins AFTER INSERT ON person_guess WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 AND NEW.state<>0 BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
-CREATE TRIGGER IF NOT EXISTS t_pimg_new AFTER UPDATE OF person_id ON faces WHEN NEW.person_id IS NOT NULL AND OLD.person_id IS NOT NEW.person_id BEGIN
+CREATE TRIGGER IF NOT EXISTS t_pimg_new AFTER UPDATE OF person_id ON faces WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 AND NEW.person_id IS NOT NULL AND OLD.person_id IS NOT NEW.person_id BEGIN
   INSERT OR REPLACE INTO edit_ts VALUES('pimg:'||NEW.person_id||'|'||NEW.image_id, (julianday('now') - 2440587.5) * 86400.0); END;
 CREATE TABLE IF NOT EXISTS cloth_group(image_id INTEGER PRIMARY KEY, grp TEXT, p REAL);
 CREATE TABLE IF NOT EXISTS clothing(image_id INTEGER PRIMARY KEY, cat TEXT, prob REAL);
@@ -115,7 +117,11 @@ class DB:
             self.con = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
             self.con.execute("PRAGMA journal_mode=WAL")
         self.con.row_factory = sqlite3.Row
+        if self.con.execute("PRAGMA user_version").fetchone()[0] < 2:          # trigger cũ ghi dấu cả khi app tự chạy: bỏ đi để tạo lại có điều kiện
+            for t in self.con.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 't\\_%' ESCAPE '\\'").fetchall():
+                self.con.execute(f"DROP TRIGGER IF EXISTS {t[0]}")
         self.con.executescript(SCHEMA)
+        self.con.execute("PRAGMA user_version=2")
         cols = {r["name"] for r in self.con.execute("PRAGMA table_info(images)")}
         for c in ("vid", "name"):
             if c not in cols:
@@ -134,7 +140,7 @@ class DB:
         self.con.execute("UPDATE persons SET cover_face=NULL WHERE cover_face IS NOT NULL")      # bỏ các lựa chọn tay cũ
         if "lsrc" not in {r["name"] for r in self.con.execute("PRAGMA table_info(faces)")}:
             self.con.execute("ALTER TABLE faces ADD COLUMN lsrc TEXT")          # 'user' = người dùng tự chỉnh tay (không bao giờ bị app sửa lại)
-        self.con.execute("""CREATE TRIGGER IF NOT EXISTS t_pfav AFTER UPDATE OF favorite ON persons BEGIN
+        self.con.execute("""CREATE TRIGGER IF NOT EXISTS t_pfav AFTER UPDATE OF favorite ON persons WHEN (SELECT auto FROM edit_mode WHERE id=1)=0 BEGIN
             INSERT OR REPLACE INTO edit_ts VALUES('fav:'||NEW.id, (julianday('now') - 2440587.5) * 86400.0); END""")             # trái tim người: bên nào bấm sau cùng thì thắng (PC <-> điện thoại)
         self.con.commit()
 
@@ -274,6 +280,24 @@ class DB:
                      (SELECT id FROM faces WHERE person_id=p.id ORDER BY locked DESC, score*px DESC LIMIT 1))) cover_box
             FROM persons p WHERE p.hidden=? AND EXISTS(SELECT 1 FROM faces f WHERE f.person_id=p.id)
             ORDER BY (p.name IS NULL), n DESC""", (hidden,))
+
+    def auto_edits(self):
+        """Ngữ cảnh: trong khối này các thay đổi do app TỰ làm (gom mặt, đoán tên, tự phân loại…) không được tính là người dùng vừa sửa trên PC,
+        để thao tác thật của điện thoại không bị coi là 'cũ hơn' và bỏ qua oan."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def cm():
+            self._auto_depth = getattr(self, "_auto_depth", 0) + 1
+            self.con.execute("UPDATE edit_mode SET auto=1 WHERE id=1")
+            try:
+                yield
+            finally:
+                self._auto_depth -= 1
+                if self._auto_depth <= 0:
+                    self._auto_depth = 0
+                    self.con.execute("UPDATE edit_mode SET auto=0 WHERE id=1")
+        return cm()
 
     def log_activity(self, text):
         """Nhật ký sử dụng (ngắn gọn): thời điểm và nội dung đã đồng bộ giữa PC và điện thoại, giải phóng dung lượng… Giữ 300 dòng gần nhất."""

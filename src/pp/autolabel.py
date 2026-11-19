@@ -9,6 +9,8 @@ MIN_EXAMPLES = 3
 SUGGEST_MIN = 0.80       # mức giống tối thiểu để được gợi ý
 AUTO_MIN = 0.92          # mức giống để tự gán không cần hỏi
 MARGIN = 0.03            # nhãn tốt nhất phải hơn nhãn thứ hai ít nhất chừng này
+from .cluster import auto_edit as _auto_edit
+
 FAVORITE = "Yêu thích"   # nhãn ngôi sao: chỉ do bạn tự bấm, không bao giờ tự gán hay gợi ý
 
 
@@ -76,6 +78,7 @@ def apply(db, label_id, image_ids, auto=False):
     return n
 
 
+@_auto_edit
 def strip_favorite_auto(db):
     """Gỡ ngôi sao mà app từng TỰ gán nhầm (do coi 'Yêu thích' như một nhãn thường và gán theo độ giống nội dung). Ngôi sao bạn tự bấm thì giữ nguyên."""
     lab = db.one("SELECT id FROM labels WHERE name=?", (FAVORITE,))
@@ -89,6 +92,7 @@ def strip_favorite_auto(db):
     return len(rows)
 
 
+@_auto_edit
 def run_auto(db, thr=AUTO_MIN):
     """Tự gán nhãn cho các ảnh rất chắc chắn (sau mỗi lần quét). Trả về số ảnh đã gán."""
     strip_favorite_auto(db)

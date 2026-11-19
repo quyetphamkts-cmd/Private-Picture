@@ -270,9 +270,15 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
     return stats
 
 
+SKIPS = {"stale": 0, "image": 0}      # thao tác điện thoại bị bỏ qua trong lần nhận gần nhất: PC đã sửa mục đó SAU (stale) / ảnh không còn trong thư viện (image)
+
+
 def _newer(db, key, ts):
     r = db.one("SELECT ts FROM edit_ts WHERE k=?", (key,))
-    return r is None or ts > r["ts"]
+    ok = r is None or ts > r["ts"]
+    if not ok:
+        SKIPS["stale"] += 1
+    return ok
 
 
 def _stamp(db, keys, ts):
@@ -292,7 +298,9 @@ def apply_inbox(db, dest, key):
         return 0
     by_uid = {uid_of(r["path"], r["mtime"], r["size"]): r["id"] for r in db.q("SELECT id,path,mtime,size FROM images")}
     n = 0
+    SKIPS["stale"] = SKIPS["image"] = 0
     for fn in files:
+        unresolved = False
         p = os.path.join(inbox, fn)
         try:
             j = json.loads(unseal(key, open(p, "rb").read()).decode("utf-8"))
@@ -305,6 +313,11 @@ def apply_inbox(db, dest, key):
         for op in j.get("ops", []):
             kind = op.get("op")
             ts = float(op.get("ts") or file_ts)
+            if op.get("image_uid") and op["image_uid"] not in by_uid and kind in ("label_add", "label_remove", "person_restore", "person_add", "cloth_clear", "cloth_set",
+                                                                                   "guess_accept", "guess_reject", "guess_restore", "person_remove"):
+                SKIPS["image"] += 1                          # ảnh này (theo mã ảnh) chưa / không còn trong thư viện PC: giữ tệp lại thử tiếp, không bỏ mất thay đổi
+                unresolved = True
+                continue
             if kind == "rename_person":
                 pid = op.get("person_id")
                 if db.one("SELECT 1 FROM persons WHERE id=?", (pid,)) and _newer(db, f"pname:{pid}", ts):
@@ -422,6 +435,8 @@ def apply_inbox(db, dest, key):
                     _stamp(db, [f"pimg:{pid}|{iid}"], ts)
                     n += 1
         try:
+            if unresolved and time.time() - file_ts < 3 * 86400:
+                continue                                     # còn thao tác chưa áp dụng được (ảnh chưa có trên PC): giữ tệp, lần sau thử lại (tối đa 3 ngày)
             db.c.execute("INSERT OR REPLACE INTO inbox_done(name,ts) VALUES(?,?)", (fn, time.time()))        # ghi nhận trước khi xóa tệp
             os.remove(p)
         except OSError:
