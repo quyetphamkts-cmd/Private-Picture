@@ -475,3 +475,29 @@ def test_auto_changes_do_not_make_phone_edits_look_stale(tmp_path):
     assert sync._newer(db, f"pimg:{pid}|{iid}", phone_ts)                    # PC chưa có sửa tay nào: thao tác điện thoại được nhận
     db.x("UPDATE person_guess SET state=2 WHERE image_id=?", (iid,))         # người dùng tự sửa trên PC SAU thao tác điện thoại: PC giữ bản mới hơn
     assert not sync._newer(db, f"pimg:{pid}|{iid}", phone_ts)
+
+
+def test_phone_confirm_and_unconfirm_images_to_named_person(lib, tmp_path):
+    import base64
+    pics, db = _setup(lib)
+    ps = db.persons()
+    unk, named = ps[0]["id"], ps[1]["id"]
+    cluster.rename_person(db, unk, "")
+    cluster.rename_person(db, named, "Cleo Pham")
+    db.x("INSERT OR REPLACE INTO person_suggest(person_id,name,n_arch,n_img) VALUES(?,?,?,?)", (unk, "Cleo Pham", 3, 5))
+    dest = str(tmp_path / "drive")
+    sync.run(db, dest, "pw", include_originals=False)
+    root = sync.root_of(dest)
+    j = json.load(open(os.path.join(root, "sync.json")))
+    key = secure.derive("pw", base64.b64decode(j["salt"]))
+    idx = json.loads(unseal(key, open(os.path.join(root, "index.pe"), "rb").read()))
+    pe = {p["id"]: p for p in idx["persons"]}
+    assert pe[unk]["cands"][0]["name"] == "Cleo Pham" and pe[unk]["cands"][0]["id"] == named          # điện thoại biết người có sẵn để hiện ảnh profile
+    img = db.q("SELECT i.id,i.path,i.mtime,i.size FROM images i JOIN faces f ON f.image_id=i.id WHERE f.person_id=? LIMIT 1", (unk,))[0]
+    uid = sync.uid_of(img["path"], img["mtime"], img["size"])
+    sync.post_ops(dest, key, "android", [{"op": "person_confirm", "from_person": unk, "to_person": named, "image_uids": [uid], "ts": 1e10}])
+    sync.run(db, dest, "pw", include_originals=False)
+    assert db.one("SELECT 1 FROM faces WHERE image_id=? AND person_id=?", (img["id"], named))
+    sync.post_ops(dest, key, "android", [{"op": "person_unconfirm", "from_person": unk, "to_person": named, "image_uids": [uid], "ts": 1e10 + 5}])
+    sync.run(db, dest, "pw", include_originals=False)
+    assert db.one("SELECT 1 FROM faces WHERE image_id=? AND person_id=? AND locked=0", (img["id"], unk))

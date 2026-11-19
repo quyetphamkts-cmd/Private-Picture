@@ -292,7 +292,7 @@ fun LockScreen(act: MainActivity, canLock: Boolean, onUnlock: () -> Unit) {
 
 sealed class Screen {
     object Tabs : Screen()
-    class PersonView(val p: Person) : Screen()
+    class PersonView(val p: Person, val ret: Person? = null) : Screen()                // ret: trang người chưa đặt tên đã mở ra trang này để so sánh (← quay lại đó)
     class LabelView(val l: Label) : Screen()
     class Suggest(val p: Person) : Screen()                         // trang đề xuất: ảnh chưa chắc chắn là của người này
 }
@@ -370,7 +370,7 @@ fun Main() {
     val open: (List<Img>, Int) -> Unit = { l, i -> viewer = l to i; fromPerson = (screen as? Screen.PersonView)?.p; fromSuggest = (screen as? Screen.Suggest)?.p }
     EdgeBack(viewer != null || screen !is Screen.Tabs) {
         val sc = screen
-        if (viewer != null) viewer = null else if (sc is Screen.Suggest) screen = Screen.PersonView(sc.p) else screen = Screen.Tabs
+        if (viewer != null) viewer = null else if (sc is Screen.Suggest) screen = Screen.PersonView(sc.p) else if (sc is Screen.PersonView && sc.ret != null) screen = Screen.PersonView(sc.ret) else screen = Screen.Tabs
     }
     EdgeBack(Store.selected.isNotEmpty() && viewer == null) { Store.selected = emptySet() }     // vuốt từ cạnh màn hình: bỏ chọn
     // tự nhận dữ liệu mới từ máy tính: khi app đang mở, mỗi 30 giây kiểm tra Drive, PC đã đồng bộ mới thì tải lại ở nền (không cần bấm ↻)
@@ -427,7 +427,16 @@ fun Main() {
                             Store.selected = Store.selected - ids.toSet()
                             undo = UndoItem("Đã loại khỏi danh sách", ids) { Store.personRestore(pp, ids) }
                         }
-                    }, { screen = Screen.Suggest(s.p) }) { screen = Screen.Tabs }
+                    }, { screen = Screen.Suggest(s.p) },
+                        onConfirm = { cand, ids ->                                                    // ✓: xác nhận các ảnh đã chọn vào tên đang chọn (có Hoàn tác)
+                            val pp = s.p
+                            scope.launch {
+                                try { Store.confirmImages(pp, cand.id, ids) } catch (e: Exception) { }
+                                Store.selected = Store.selected - ids.toSet()
+                                undo = UndoItem("Đã xác nhận ${ids.size} ảnh vào ${cand.name}", ids) { Store.unconfirmImages(pp, cand.id, ids) }
+                            }
+                        },
+                        onOpenCand = { cp -> screen = Screen.PersonView(cp, s.p) }) { screen = s.ret?.let { Screen.PersonView(it) } ?: Screen.Tabs }
                     is Screen.Suggest -> SuggestScreen(s.p, open,
                         onAccept = {                                                  // dấu tick: đúng người này
                             val ids = here.toList(); val pp = s.p
@@ -1809,7 +1818,7 @@ fun SettingsScreen() {
 }
 
 @Composable
-fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String, String) -> Unit, onAdd: () -> Unit, onRemove: () -> Unit, onSuggest: () -> Unit, back: () -> Unit) {
+fun PersonScreen(p: Person, openIn: (List<Img>, Int) -> Unit, onClassify: (String, String) -> Unit, onAdd: () -> Unit, onRemove: () -> Unit, onSuggest: () -> Unit, onConfirm: (Cand, List<String>) -> Unit, onOpenCand: (Person) -> Unit, back: () -> Unit) {
     val v = Store.version
     var dlg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -1819,6 +1828,18 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
     val list = if (cloth == null) all else all.filter { clothMap[it.uid] == cloth }
     val shownUids = remember(list) { list.map { it.uid }.toHashSet() }
     val selecting = Store.selected.any { it in shownUids }               // đang chọn ảnh trong danh sách này: Dressed / Naked phân loại luôn ảnh đã chọn
+    // người chưa đặt tên có tên đề xuất: hàng ô ảnh profile ở đầu trang (bấm ô để chọn tên so sánh, bấm tên để mở trang người đó), ✓ xác nhận ảnh đã chọn vào tên đang chọn
+    val hasCands = p.name.isEmpty() && p.cands.isNotEmpty()
+    var candSel by remember(p.id) { mutableStateOf<Cand?>(if (p.cands.size == 1) p.cands[0] else null) }
+    var hint by remember { mutableStateOf("") }
+    LaunchedEffect(hint) { if (hint.isNotEmpty()) { delay(3500); hint = "" } }
+    val stripH = if (hasCands) 112.dp else 0.dp
+    val doConfirm: (Cand) -> Unit = { c ->
+        val ids = Store.selected.filter { it in shownUids }
+        if (c.id == 0) hint = "“${c.name}” chưa có trang riêng: hãy đặt tên cho nhóm này trên PC."
+        else if (ids.isNotEmpty()) onConfirm(c, ids)
+    }
+    val open: (List<Img>, Int) -> Unit = { l, i -> Store.compareCand = if (hasCands) candSel else null; openIn(l, i) }
     // trang xem ảnh của một người: KHÔNG có tiêu đề tên (bên ngoài đã có), ảnh chiếm trọn màn hình; các nút tròn nổi phía trên ảnh
     Box(Modifier.fillMaxSize()) {
         val acts: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit = { _, _, _ -> }
@@ -1829,9 +1850,28 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
                 "Naked" to all.filter { clothMap[it.uid] == "nude" },
                 "Chưa phân loại" to all.filter { clothMap[it.uid] != "cloth" && clothMap[it.uid] != "nude" }
             ).filter { it.second.isNotEmpty() }
-            GroupedGrid(groups, open, topBarSpace(), posKey = "p${p.id}", actions = acts)
+            GroupedGrid(groups, open, topBarSpace() + stripH, posKey = "p${p.id}", actions = acts)
         } else {
-            TimelineGrid(list, open, null, topBarSpace(), posKey = "p${p.id}${cloth ?: ""}", actions = acts)
+            TimelineGrid(list, open, null, topBarSpace() + stripH, posKey = "p${p.id}${cloth ?: ""}", actions = acts)
+        }
+        if (hasCands) Column(Modifier.align(Alignment.TopCenter).padding(top = topBarSpace()).fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (c in p.cands) {
+                    val on = candSel?.name == c.name
+                    Row(Modifier.weight(1f).height(96.dp).clip(RoundedCornerShape(12.dp)).background(if (on) Color(0xFF30281E) else Color(0xFF201B15))
+                        .border(if (on) 2.5.dp else 1.dp, if (on) Brass else Color(0x55A9793D), RoundedCornerShape(12.dp))
+                        .clickable { candSel = c; if (selecting) doConfirm(c) }.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (c.id != 0) CoverPhoto(c.id, Store.covers[c.id], Modifier.width(54.dp).height(72.dp).clip(RoundedCornerShape(8.dp)))
+                        else Box(Modifier.width(54.dp).height(72.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A241B)), contentAlignment = Alignment.Center) { Text("?", color = Color.Gray, fontSize = 20.sp) }
+                        Column(Modifier.padding(start = 8.dp)) {
+                            Text(c.name, Modifier.clickable { Store.persons.firstOrNull { it.id == c.id }?.let { onOpenCand(it) } }.padding(vertical = 2.dp), color = Color(0xFFE5C07B), fontSize = 13.sp, maxLines = 2, lineHeight = 15.sp,
+                                style = MaterialTheme.typography.bodyMedium.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
+                            Text(c.sub, color = Color(0xFFA8A190), fontSize = 10.sp, maxLines = 2, lineHeight = 12.sp)
+                        }
+                    }
+                }
+            }
+            if (hint.isNotEmpty()) Text(hint, Modifier.padding(start = 14.dp, top = 4.dp), color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
         }
         if (all.isEmpty()) Text("Chưa có ảnh.", Modifier.padding(top = 80.dp, start = 16.dp), color = Color.Gray)
         val sugg = Store.suggestionsOf(p.id).size
@@ -1860,6 +1900,7 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
                 if (Store.selected.isNotEmpty()) RoundBtn(onClick = { Store.selected = emptySet() }) { BtnIcon("close") }
                 else RoundBtn(onClick = back) { BtnIcon("back") }
                 if (selecting) RoundBtn(onClick = onAdd) { BtnIcon("add") }
+                if (selecting && hasCands) RoundBtn(onClick = { val c = candSel; if (c == null) hint = "Bấm một ô tên đề xuất ở đầu trang để chọn tên trước." else doConfirm(c) }) { BtnIcon("tick") }
             },
             center = {
                 ClothPill(cloth, selecting) { c ->
@@ -2023,6 +2064,9 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
     var acceptedSuggest by remember { mutableStateOf(false) }        // lần xử lý gần nhất là xác nhận đúng người (hoàn tác: bỏ khỏi người đó và đưa về đề xuất)
     var removedSuggest by remember { mutableStateOf(false) }          // lần loại gần nhất là loại khỏi đề xuất (hoàn tác bằng guessRestore)
     var lastRemoved by remember { mutableStateOf<Pair<Person, String>?>(null) }     // để có nút Hoàn tác
+    val cmp = remember { if (fromPerson != null) Store.compareCand else null }         // tên đang so sánh (trang người chưa đặt tên): ảnh profile ở nửa trên, ảnh đang xem ở nửa dưới
+    var confirmUndo by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { Store.compareCand = null } }
     val list = remember(listIn, removed) { listIn.filter { it.uid !in removed } }
     val pager = rememberPagerState(initialPage = start.coerceIn(0, (listIn.size - 1).coerceAtLeast(0))) { list.size }
     var zoomed by remember { mutableStateOf(false) }
@@ -2077,7 +2121,14 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
         onDispose { c?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF0C0A08))) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), userScrollEnabled = !zoomed, key = { list[it].uid }) { page ->
+        if (cmp != null) Box(Modifier.fillMaxWidth().fillMaxHeight(0.5f).align(Alignment.TopCenter).padding(top = 64.dp, bottom = 6.dp)) {
+            val cb by produceState<Bitmap?>(null, cmp.id) { value = if (cmp.id != 0) Store.cover(cmp.id) else null }
+            cb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
+            if (cb == null) Text("Chưa có ảnh profile", Modifier.align(Alignment.Center), color = Color.Gray)
+            Text(cmp.name, Modifier.align(Alignment.BottomStart).padding(start = 12.dp).clickable { Store.persons.firstOrNull { it.id == cmp.id }?.let { onPerson(it) } }, color = Color(0xFFE5C07B),
+                style = MaterialTheme.typography.titleSmall.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
+        }
+        HorizontalPager(pager, if (cmp != null) Modifier.fillMaxWidth().fillMaxHeight(0.5f).align(Alignment.BottomCenter) else Modifier.fillMaxSize(), userScrollEnabled = !zoomed, key = { list[it].uid }) { page ->
             ZoomImage(list[page].uid, { chrome = !chrome }) { zoomed = it }
         }
         if (chrome) {
@@ -2116,7 +2167,16 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 },
                 center = {
                     // khung xem ảnh: ô dài chỉ có Dressed | Naked (rộng 2 hình tròn); ngôi sao Yêu thích nằm ở góc dưới bên phải, cùng hàng với tên model
-                    ClothPill(curCloth, false, showThird = false) { c ->
+                    ClothPill(curCloth, false, showThird = cmp != null, thirdKind = if (cmp != null) "tick" else null, onThird = {            // ✓: xác nhận ảnh đang xem vào tên đang so sánh
+                        val cc = cmp; val fp = fromPerson
+                        if (cc != null && fp != null) {
+                            if (cc.id == 0) note = "“${cc.name}” chưa có trang riêng: hãy đặt tên cho nhóm này trên PC."
+                            else scope.launch {
+                                try { Store.confirmImages(fp, cc.id, listOf(cur.uid)); removed = removed + cur.uid; confirmUndo = cur.uid; note = "Đã xác nhận vào ${cc.name}" }
+                                catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
+                            }
+                        }
+                    }) { c ->
                         scope.launch {
                             try {
                                 if (c != null) {
@@ -2167,8 +2227,11 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                     }
                 }
                 if (labs.isNotEmpty()) Text("Nhãn: " + labs.joinToString(", "), color = Color.White, style = MaterialTheme.typography.bodySmall)
-                if (note.isNotEmpty() || lastRemoved != null || clothUndo != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                if (note.isNotEmpty() || lastRemoved != null || clothUndo != null || confirmUndo != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     if (note.isNotEmpty()) Text(note, maxLines = 1, color = Color(0xFFFFB4A8), style = MaterialTheme.typography.bodySmall)
+                    confirmUndo?.let { uid ->
+                        Text("Hoàn tác", Modifier.clickable { scope.launch { try { if (cmp != null && fromPerson != null) Store.unconfirmImages(fromPerson, cmp.id, listOf(uid)); removed = removed - uid; confirmUndo = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp), color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
+                    }
                     clothUndo?.let { (uid, prev) ->
                         Text("Hoàn tác", Modifier.clickable { scope.launch { try { if (prev == null) Store.clearCloth(listOf(uid)) else Store.setCloth(listOf(uid), prev); removed = removed - uid; clothUndo = null; note = "Đã hoàn tác" } catch (e: Exception) { note = "Không hoàn tác được: ${e.message}" } } }.padding(start = 12.dp, top = 2.dp, bottom = 2.dp), color = Color(0xFFE5C07B), style = MaterialTheme.typography.bodySmall)
                     }

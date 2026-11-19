@@ -2160,24 +2160,7 @@ class PeoplePage(Page):
 
     def _candidate_list(self, name, sg, cands):
         """Các tên đề xuất cho người chưa đặt tên: [{name, pid (người đã có tên khớp, nếu có), sub}]."""
-        if name:
-            return []
-        db = self.ctx.db
-        raw = []
-        if sg:
-            raw.append({"name": sg["name"], "sub": f"theo tên trên {sg['n_arch']} tệp nén"})
-        for c in cands:
-            raw.append({"name": c["name"], "sub": f"{round(100 * c['score'])}%"})
-        named = {}
-        for p in db.persons():
-            if p["name"] and p["id"] != self.pid:
-                named.setdefault(cluster.fold(p["name"]), []).append(p)
-        out = []
-        for c in raw[:3]:
-            ps = sorted(named.get(cluster.fold(c["name"]), []), key=lambda p: -p["n"])
-            c["pid"] = ps[0]["id"] if ps else None
-            out.append(c)
-        return out
+        return [] if name else cluster.candidate_names(self.ctx.db, self.pid)
 
     def _cand_pixmap(self, pid):
         """Ảnh profile của một người (từ giữa đùi lên, như ảnh đại diện); không có thì khuôn mặt đã cắt sẵn."""

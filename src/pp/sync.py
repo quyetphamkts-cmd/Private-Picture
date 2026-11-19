@@ -225,8 +225,14 @@ def run(db, dest, password, include_originals=True, vault=None, zip_pw=None, pro
     except Exception:
         pass
     persons = [{"id": p["id"], "name": p["name"], "n": p["n"], "fav": 1 if p["favorite"] else 0} for p in db.persons()]
+    from . import cluster
     sugs = {r["person_id"]: r for r in db.q("SELECT person_id,name,n_arch FROM person_suggest")}
-    for p in persons:                                         # người chưa đặt tên: kèm tên PC đoán là đúng (theo tên trên tệp nén) để điện thoại hiện gợi ý
+    named_idx = cluster.named_index(db)
+    for p in persons:
+        if not (p["name"] or "").strip():                      # người chưa đặt tên: các tên đề xuất (kèm mã người có sẵn để điện thoại hiện ảnh profile) để so sánh và xác nhận ảnh
+            cl = cluster.candidate_names(db, p["id"], named_idx)
+            if cl:
+                p["cands"] = [{"id": c["pid"] or 0, "name": c["name"], "sub": c["sub"]} for c in cl]                                         # người chưa đặt tên: kèm tên PC đoán là đúng (theo tên trên tệp nén) để điện thoại hiện gợi ý
         sg = sugs.get(p["id"])
         if sg and not (p["name"] or "").strip() and (sg["name"] or "").strip():
             p["sug"] = sg["name"]
@@ -421,6 +427,18 @@ def apply_inbox(db, dest, key):
                     else:
                         db.x("UPDATE person_guess SET state=0 WHERE image_id=? AND person_id=? AND state=1", (iid, pid))      # hoàn tác: về lại đề xuất
                     _stamp(db, [f"pimg:{pid}|{iid}"], ts)
+                    n += 1
+            elif kind in ("person_confirm", "person_unconfirm") and db.one("SELECT 1 FROM persons WHERE id=?", (op.get("from_person"),)) \
+                    and db.one("SELECT 1 FROM persons WHERE id=?", (op.get("to_person"),)):
+                fp, tp = op["from_person"], op["to_person"]
+                iids = [by_uid[u] for u in (op.get("image_uids") or []) if u in by_uid]
+                iids = [i for i in iids if _newer(db, f"pimg:{tp}|{i}", ts)]
+                if iids:
+                    if kind == "person_confirm":
+                        cluster.confirm_to_person(db, iids, tp, fp)           # xác nhận ảnh của người chưa đặt tên vào một người có sẵn (từ điện thoại)
+                    else:
+                        cluster.unconfirm_images(db, iids, tp, fp)            # hoàn tác
+                    _stamp(db, [f"pimg:{tp}|{i}" for i in iids], ts)
                     n += 1
             elif kind == "person_fav" and db.one("SELECT 1 FROM persons WHERE id=?", (op.get("person_id"),)):
                 pid = op["person_id"]

@@ -20,7 +20,8 @@ import org.json.JSONObject
 import java.io.File
 
 class Img(val uid: String, val name: String, val taken: String, val w: Int, val h: Int, val orig: Boolean)
-class Person(val id: Int, var name: String, val n: Int, var sug: String = "", var sugN: Int = 0, val pcN: Int = 0)
+class Cand(val id: Int, val name: String, val sub: String)             // tên đề xuất cho người chưa đặt tên: id = người có sẵn trên PC (0 nếu chưa có người nào mang tên đó)
+class Person(val id: Int, var name: String, val n: Int, var sug: String = "", var sugN: Int = 0, val pcN: Int = 0, val cands: List<Cand> = emptyList())
 class Label(val id: Int, val name: String)
 class Combo(val names: List<String>, val archives: Int, val uids: List<String>, val flag: Boolean = false, val issues: List<String> = emptyList())
 class Job(val provider: String, val kind: String, val created: String, val status: String)
@@ -273,7 +274,8 @@ object Store {
         l.sortByDescending { it.taken }
         images = l
         val ps = j.getJSONArray("persons")
-        persons = (0 until ps.length()).map { ps.getJSONObject(it).let { o -> Person(o.getInt("id"), o.optString("name").let { n -> if (n == "null") "" else n }, o.optInt("n"), o.optString("sug"), o.optInt("sugn"), o.optInt("n")) } }
+        persons = (0 until ps.length()).map { ps.getJSONObject(it).let { o -> Person(o.getInt("id"), o.optString("name").let { n -> if (n == "null") "" else n }, o.optInt("n"), o.optString("sug"), o.optInt("sugn"), o.optInt("n"),
+            o.optJSONArray("cands")?.let { ca -> (0 until ca.length()).map { k -> ca.getJSONObject(k).let { c -> Cand(c.optInt("id"), c.optString("name"), c.optString("sub")) } } } ?: emptyList()) } }
         val favFromIndex = (0 until ps.length()).map { ps.getJSONObject(it) }.filter { it.optInt("fav") == 1 }.map { it.getInt("id") }.toSet()
         if (ps.length() > 0 && ps.getJSONObject(0).has("fav")) {                      // trái tim người cũng đồng bộ hai chiều: danh mục là nguồn chính
             if (!favPrefs.getBoolean("migrated", false)) {                              // lần đầu: trái tim đã bấm riêng trên điện thoại trước đây được gửi cho PC
@@ -630,7 +632,7 @@ object Store {
     }
 
     private fun recountPersons() {
-        persons = persons.map { p -> Person(p.id, p.name, personOf.values.count { it.contains(p.id) }.let { c -> if (c > 0 || p.name.isEmpty()) c else p.pcN }, p.sug, p.sugN, p.pcN) }
+        persons = persons.map { p -> Person(p.id, p.name, personOf.values.count { it.contains(p.id) }.let { c -> if (c > 0 || p.name.isEmpty()) c else p.pcN }, p.sug, p.sugN, p.pcN, p.cands) }
     }
 
     /** Áp dụng các thao tác lên dữ liệu trong bộ nhớ (dùng cho cả thao tác mới và các thay đổi chưa được PC xử lý). */
@@ -697,6 +699,17 @@ object Store {
                     val pid = o.getInt("person_id")
                     val l = personOf.getOrPut(o.getString("image_uid")) { mutableListOf() }
                     if (!l.contains(pid)) l.add(pid)
+                    recountPersons()
+                }
+                "person_confirm", "person_unconfirm" -> {                    // xác nhận ảnh của người chưa đặt tên vào một người có sẵn (và hoàn tác)
+                    val from = o.getInt("from_person"); val to = o.getInt("to_person")
+                    val ua = o.getJSONArray("image_uids")
+                    val on = o.getString("op") == "person_confirm"
+                    for (k in 0 until ua.length()) {
+                        val l = personOf.getOrPut(ua.getString(k)) { mutableListOf() }
+                        l.remove(if (on) from else to)
+                        if (!l.contains(if (on) to else from)) l.add(if (on) to else from)
+                    }
                     recountPersons()
                 }
                 "person_create" -> {                                       // tạo người mới từ các ảnh đã chọn (mã tạm trên điện thoại, PC cấp mã thật khi đồng bộ)
@@ -784,6 +797,12 @@ object Store {
         for (u in uids) ops.put(op("person_restore").put("person_id", p.id).put("image_uid", u))
         commit(ops)
     }
+
+    var compareCand: Cand? = null                          // tên đang so sánh ở trang người chưa đặt tên: khi xem ảnh, ảnh profile của tên này hiện ở nửa trên
+
+    /** Xác nhận các ảnh của người chưa đặt tên `from` thật ra là của người `to` (mã người có sẵn); gửi PC như mọi thao tác khác. */
+    suspend fun confirmImages(from: Person, to: Int, uids: Collection<String>) = commit(JSONArray().put(op("person_confirm").put("from_person", from.id).put("to_person", to).put("image_uids", JSONArray(uids.toList()))))
+    suspend fun unconfirmImages(from: Person, to: Int, uids: Collection<String>) = commit(JSONArray().put(op("person_unconfirm").put("from_person", from.id).put("to_person", to).put("image_uids", JSONArray(uids.toList()))))
 
     suspend fun personAdd(p: Person, uids: Collection<String>) {
         val ops = JSONArray()

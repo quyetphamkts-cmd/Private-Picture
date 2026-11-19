@@ -1904,3 +1904,32 @@ def unconfirm_images(db, image_ids, to_pid, from_pid):
             n += 1
     db.commit()
     return n
+
+
+def named_index(db):
+    """{tên đã gấp: [người đã có tên khớp, nhiều ảnh nhất trước]} để đối chiếu tên đề xuất với người có sẵn."""
+    idx = {}
+    for p in db.persons():
+        if p["name"]:
+            idx.setdefault(fold(p["name"]), []).append(p)
+    for v in idx.values():
+        v.sort(key=lambda p: -p["n"])
+    return idx
+
+
+def candidate_names(db, pid, named=None, limit=3):
+    """Các tên đề xuất cho người chưa đặt tên `pid`: [{name, pid (người đã có tên khớp, hoặc None), sub}] — tên theo tệp nén trước, không có thì các tên ứng viên."""
+    sg = db.one("SELECT name,n_arch FROM person_suggest WHERE person_id=?", (pid,))
+    raw = []
+    if sg and (sg["name"] or "").strip():
+        raw.append({"name": sg["name"], "sub": f"theo tên trên {sg['n_arch']} tệp nén"})
+    else:
+        for c in db.q("SELECT name,score FROM person_candidates WHERE person_id=? ORDER BY score DESC LIMIT ?", (pid, limit)):
+            raw.append({"name": c["name"], "sub": f"{round(100 * (c['score'] or 0))}%"})
+    named = named if named is not None else named_index(db)
+    out = []
+    for c in raw[:limit]:
+        ps = [p for p in named.get(fold(c["name"]), []) if p["id"] != pid]
+        c["pid"] = ps[0]["id"] if ps else None
+        out.append(c)
+    return out
