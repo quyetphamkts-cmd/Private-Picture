@@ -125,6 +125,9 @@ object Store {
     var modelLetter: String
         get() = posPrefs.getString("letter", "") ?: ""
         set(v) { posPrefs.edit().putString("letter", v).apply() }
+    /** Ảnh đầu tiên đang nhìn thấy ở mỗi lưới (All, Favorite, Mashup, trang người…): lần mở sau (kể cả mở lại app) lưới về đúng chỗ đó. */
+    fun gridAnchor(key: String): String? = posPrefs.getString("a_$key", null)
+    fun setGridAnchor(key: String, uid: String) { posPrefs.edit().putString("a_$key", uid).apply() }
     fun modelScrollOf(key: String): Pair<Int, Int> = Pair(posPrefs.getInt("i_$key", 0), posPrefs.getInt("o_$key", 0))
     fun setModelScroll(key: String, index: Int, offset: Int) { posPrefs.edit().putInt("i_$key", index).putInt("o_$key", offset).apply() }
 

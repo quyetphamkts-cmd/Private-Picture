@@ -1295,9 +1295,35 @@ private fun justifyRows(imgs: List<Img>, widthDp: Float, target: Float = 130f): 
     return out
 }
 
+/** Nhớ vị trí lưới: lưu ảnh đầu tiên đang nhìn thấy, mở lại thì cuộn về đúng ảnh đó (không đụng tới khi vừa xem ảnh xong, vì khi đó lưới đã tự cuộn tới ảnh vừa xem). */
+@Composable
+private fun GridPosMemory(key: String?, state: androidx.compose.foundation.lazy.grid.LazyGridState, entries: List<Entry>) {
+    if (key == null) return
+    var restored by remember(key) { mutableStateOf(false) }
+    LaunchedEffect(entries.size, key) {
+        if (!restored && entries.isNotEmpty()) {
+            if (Store.focusUid == null) {
+                val u = Store.gridAnchor(key)
+                if (u != null) { val idx = entries.indexOfFirst { it is Entry.Photo && it.img.uid == u }; if (idx >= 0) state.scrollToItem(idx) }
+            }
+            restored = true
+        }
+    }
+    LaunchedEffect(state, entries, key) {
+        snapshotFlow { state.firstVisibleItemIndex }.collectLatest { i ->
+            kotlinx.coroutines.delay(300)
+            if (restored) {
+                var j = i
+                while (j < entries.size && entries[j] !is Entry.Photo) j++
+                (entries.getOrNull(j) as? Entry.Photo)?.let { Store.setGridAnchor(key, it.img.uid) }
+            }
+        }
+    }
+}
+
 /** Dòng thời gian như Google Ảnh: mới nhất ở trên, tiêu đề theo ngày, nhãn ngày nổi khi cuộn, thanh kéo nhanh bên phải có mốc năm. */
 @Composable
-fun TimelineGrid(list: List<Img>, open: (List<Img>, Int) -> Unit, focus: String? = null, topPad: androidx.compose.ui.unit.Dp = 0.dp, actions: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit) {
+fun TimelineGrid(list: List<Img>, open: (List<Img>, Int) -> Unit, focus: String? = null, topPad: androidx.compose.ui.unit.Dp = 0.dp, posKey: String? = null, actions: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit) {
     val sel = Store.selected
     LaunchedEffect(list) { Store.pool = list }                       // "Chọn ảnh tương tự" tìm trong danh sách đang xem
     val state = rememberLazyGridState()
@@ -1348,6 +1374,7 @@ fun TimelineGrid(list: List<Img>, open: (List<Img>, Int) -> Unit, focus: String?
         return (entries.lastOrNull { it is Entry.Photo } as? Entry.Photo)?.img?.taken ?: ""
     }
     KeepAnchor(state, entries)
+    GridPosMemory(posKey, state, entries)
     val pz = rememberPinchZoom { stepLayout(it) }
     LayoutAnchor(state, entries, pz)
     val uidIndex = remember(entries) { HashMap<String, Int>().also { m -> entries.forEachIndexed { i, e -> if (e is Entry.Photo) m[e.img.uid] = i } } }
@@ -1502,7 +1529,7 @@ fun AllPhotos(open: (List<Img>, Int) -> Unit, focus: String? = null, favOnly: Bo
     val shownUids = remember(list) { list.map { it.uid }.toHashSet() }
     val selecting = Store.selected.any { it in shownUids }               // đang chọn ảnh: Dressed / Naked phân loại luôn ảnh đã chọn
     Box(Modifier.fillMaxSize()) {
-        TimelineGrid(list, open, focus, topBarSpace()) { _, _, _ -> }
+        TimelineGrid(list, open, focus, topBarSpace(), posKey = (if (favOnly) "fav" else "all") + (cloth ?: "")) { _, _, _ -> }
         if (list.isEmpty()) Text(if (favOnly) "Chưa có ảnh yêu thích. Bấm ngôi sao khi xem ảnh để thêm." else "Chưa có ảnh.", Modifier.padding(top = 80.dp, start = 16.dp), color = Color.Gray)
         if (msg.isNotEmpty()) Text(msg, Modifier.align(Alignment.TopCenter).padding(top = 66.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp), color = Color.White, style = MaterialTheme.typography.bodySmall)
         TopBar(Modifier.align(Alignment.TopStart),
@@ -1545,7 +1572,7 @@ fun ComboScreen(open: (List<Img>, Int) -> Unit) {
                 "Naked" to imgs.filter { Store.clothing[it.uid] == "nude" },
                 "Chưa phân loại" to imgs.filter { Store.clothing[it.uid] != "cloth" && Store.clothing[it.uid] != "nude" }
             ).filter { it.second.isNotEmpty() }
-            GroupedGrid(groups, open) { _, _, _ -> }
+            GroupedGrid(groups, open, posKey = "combo$cur") { _, _, _ -> }
         }
     }
     if (v < 0) Text("")
@@ -1790,9 +1817,9 @@ fun PersonScreen(p: Person, open: (List<Img>, Int) -> Unit, onClassify: (String,
                 "Naked" to all.filter { clothMap[it.uid] == "nude" },
                 "Chưa phân loại" to all.filter { clothMap[it.uid] != "cloth" && clothMap[it.uid] != "nude" }
             ).filter { it.second.isNotEmpty() }
-            GroupedGrid(groups, open, topBarSpace(), acts)
+            GroupedGrid(groups, open, topBarSpace(), posKey = "p${p.id}", actions = acts)
         } else {
-            TimelineGrid(list, open, null, topBarSpace(), acts)
+            TimelineGrid(list, open, null, topBarSpace(), posKey = "p${p.id}${cloth ?: ""}", actions = acts)
         }
         if (all.isEmpty()) Text("Chưa có ảnh.", Modifier.padding(top = 80.dp, start = 16.dp), color = Color.Gray)
         val sugg = Store.suggestionsOf(p.id).size
@@ -2171,7 +2198,7 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
 
 /** Lưới ảnh chia cụm có tiêu đề (cụm trống không hiện). Chọn nhiều ảnh như các lưới khác; mở ảnh thì xem theo thứ tự các cụm. */
 @Composable
-fun GroupedGrid(groups: List<Pair<String, List<Img>>>, open: (List<Img>, Int) -> Unit, topPad: androidx.compose.ui.unit.Dp = 0.dp, actions: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit) {
+fun GroupedGrid(groups: List<Pair<String, List<Img>>>, open: (List<Img>, Int) -> Unit, topPad: androidx.compose.ui.unit.Dp = 0.dp, posKey: String? = null, actions: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit) {
     val sel = Store.selected
     val flat = remember(groups) { groups.flatMap { it.second } }
     LaunchedEffect(flat) { Store.pool = flat }
@@ -2191,6 +2218,7 @@ fun GroupedGrid(groups: List<Pair<String, List<Img>>>, open: (List<Img>, Int) ->
     }
     val gstate = rememberLazyGridState()
     KeepAnchor(gstate, entries)
+    GridPosMemory(posKey, gstate, entries)
     val gpz = rememberPinchZoom { stepLayout(it) }
     LayoutAnchor(gstate, entries, gpz)
     val uidIndex = remember(entries) { HashMap<String, Int>().also { m -> entries.forEachIndexed { i, e -> if (e is Entry.Photo) m[e.img.uid] = i } } }
