@@ -352,9 +352,16 @@ class PhotoGrid(QWidget):
         self.bar = SelBar(self) if bar else None
         if self.bar is not None:
             lay.addWidget(self.bar)
+        self.pos_key = None                          # đặt tên (ví dụ "all") thì nhớ vị trí cuộn: lần mở sau (kể cả mở lại ứng dụng) lưới về đúng chỗ đang xem
+        self._pos_restored = False
+        self._pos_t = QTimer(self)
+        self._pos_t.setSingleShot(True)
+        self._pos_t.setInterval(700)
+        self._pos_t.timeout.connect(self._save_pos)
         lay.addWidget(self.zoomw)
         lay.addWidget(self.grid)
         self.grid.selectionChanged.connect(self._sel_changed)
+        self.grid.verticalScrollBar().valueChanged.connect(lambda _: self._pos_t.start() if self.pos_key else None)
         self.grid.activated.connect(self._open_viewer)
         self.grid.contextRequested.connect(self.menu)
         self.grid.quickLook.connect(lambda i: QuickLook(self.model.items, i, make_loader(self.ctx), self, self.grid).exec())
@@ -513,6 +520,36 @@ class PhotoGrid(QWidget):
 
     def set_items(self, items):
         self.model.set_items(items)
+        if self.pos_key and not self._pos_restored and items:
+            self._pos_restored = True
+            QTimer.singleShot(0, self._restore_pos)
+
+    def _top_id(self):
+        """Mã ảnh đầu tiên đang nhìn thấy ở mép trên lưới."""
+        g = self.grid
+        v = g.verticalScrollBar().value()
+        for i, b in enumerate(getattr(g, "bottoms", [])):
+            if b > v:
+                return self.model.items[i].get("id") if i < len(self.model.items) else None
+        return None
+
+    def _save_pos(self):
+        try:
+            iid = self._top_id()
+            if iid is not None:
+                self.ctx.db.set_meta(f"pos:{self.pos_key}", str(iid))
+        except Exception:
+            pass
+
+    def _restore_pos(self):
+        try:
+            iid = int(self.ctx.db.get_meta(f"pos:{self.pos_key}", "0") or 0)
+            for k, it in enumerate(self.model.items):
+                if it.get("id") == iid and k < len(self.grid.rects):
+                    self.grid.verticalScrollBar().setValue(int(self.grid.rects[k][1]))
+                    break
+        except Exception:
+            pass
 
     def selected(self):
         return [i for i in selected_items(self.grid) if i.get("id") is not None]
@@ -954,6 +991,7 @@ class LibraryPage(Page):
         self.cloth = ClothPill("Lọc ảnh: Dressed / Naked / All")
         self.cloth.changed.connect(self.refresh)
         self.grid = PhotoGrid(ctx, self)
+        self.grid.pos_key = "fav" if getattr(self, "fav_only", False) else "all"         # nhớ vị trí đang xem của All / Favorite
         self.cloth.intercept = lambda key: self.grid.classify_selected(key)       # đang chọn ảnh: Dressed / Naked phân loại luôn các ảnh đã chọn
         self.grid.bar.set_center(self.cloth)
         self.panel = QWidget()                                   # bộ lọc và tìm kiếm: mặc định ẩn cho gọn, mở trong nút ⋯

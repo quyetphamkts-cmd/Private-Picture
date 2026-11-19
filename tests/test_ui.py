@@ -1052,3 +1052,31 @@ def test_favorite_star_is_never_auto_assigned_and_old_auto_stars_are_removed(tmp
     db.x("INSERT INTO label_auto VALUES(?,?,1)", (fav, ids[7]))
     assert autolabel.strip_favorite_auto(db) == 1
     assert set(db.label_ids(fav)) == set(ids[:3])                              # ngôi sao tự bấm vẫn còn, ngôi sao tự gán đã bị gỡ
+
+
+def test_library_grid_remembers_position(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import PhotoGrid, Page
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "pos"))
+    ctx = AppContext()
+    items = [{"id": i + 1, "key": f"k{i}", "thumb": None, "w": 300, "h": 200} for i in range(400)]
+    pg = PhotoGrid(ctx, Page(ctx))
+    pg.pos_key = "t"
+    pg.resize(900, 600)
+    pg.show()
+    pg.set_items(items)
+    QTest.qWait(60)
+    pg.grid.verticalScrollBar().setValue(3000)
+    QTest.qWait(900)
+    saved = int(ctx.db.get_meta("pos:t"))
+    assert saved > 1                                                       # đã ghi nhớ ảnh đang ở mép trên
+    pg2 = PhotoGrid(ctx, Page(ctx))                                        # như mở lại ứng dụng
+    pg2.pos_key = "t"
+    pg2.resize(900, 600)
+    pg2.show()
+    pg2.set_items(items)
+    QTest.qWait(120)
+    assert pg2.grid.verticalScrollBar().value() > 1000
