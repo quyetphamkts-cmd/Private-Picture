@@ -1239,3 +1239,17 @@ def test_select_all_chip_on_suggestion_lists(tmp_path, monkeypatch):
     assert page.sel_count() == 5 and "Bỏ chọn" in page.sel_chip.text()
     page.sel_chip.click()
     assert page.sel_count() == 0 and "Chọn tất cả" in page.sel_chip.text()
+
+
+def test_selected_letter_shows_people_count(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.pages import LetterTabs
+    QApplication.instance() or QApplication([])
+    t = LetterTabs()
+    t.set_letters({"A": 133, "B": 7, "♥": 12, "#": 40, "All": 1178})
+    t.set_current("A")
+    assert "133" in t.btns["A"].text() and t.btns["B"].text() == "B"
+    t.set_current("♥")
+    assert "12" in t.btns["♥"].text() and t.btns["A"].text() == "A"
+    t.set_current("All")
+    assert "1.178" in t.btns["All"].text()

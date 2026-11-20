@@ -1768,9 +1768,12 @@ fun ModelScreen(onOpen: (Person) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         androidx.compose.foundation.lazy.LazyRow(Modifier.fillMaxWidth().padding(vertical = 4.dp), state = lstate, contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(keys) { l ->
-                if (l == "♥") Box(Modifier.size(34.dp).clip(CircleShape).background(if (l == cur) Brass else Color(0x1A000000)).clickable { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }, contentAlignment = Alignment.Center) {
+                val cnt = byLetter[l]?.size ?: 0                                // nút đang chọn hiện thêm tổng số người trong mục đó
+                if (l == "♥") Row(Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(if (l == cur) Brass else Color(0x1A000000)).clickable { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }.padding(horizontal = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     HeartIcon(true, Modifier.size(16.dp))                 // nút trái tim nằm trong hình tròn, trước chữ A
-                } else FilterPill(l, l == cur) { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }
+                    if (l == cur) Text(" $cnt", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                } else FilterPill(if (l == cur) "$l · $cnt" else l, l == cur) { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }
             }
         }
         if (keys.size <= 1) Text("Chưa có ai trong thư viện.", Modifier.padding(16.dp), color = Color.Gray)
@@ -2354,7 +2357,8 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
     var bmp by remember(uid) { mutableStateOf<Bitmap?>(null) }
     var scale by remember(uid) { mutableStateOf(1f) }
     var offset by remember(uid) { mutableStateOf(Offset.Zero) }
-    var rot by remember(uid) { mutableStateOf(Store.rotationOf(uid)) }            // góc xoay bằng hai ngón tay (độ), nhớ cho lần xem sau
+    var rot by remember(uid) { mutableStateOf((Math.round(Store.rotationOf(uid) / 90f) * 90).toFloat()) }            // hướng ảnh: bội số của 90° (xoay bằng hai ngón), nhớ cho lần xem sau
+    var liveRot by remember(uid) { mutableStateOf(0f) }                           // góc đang xoay theo ngón tay (chỉ để xem trước, thả tay mới chốt 90°)
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(uid) {
         bmp = Store.thumb(uid)
@@ -2403,13 +2407,20 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
                 awaitEachGesture {
                     val down0 = awaitFirstDown(requireUnconsumed = false)
                     var panning = false                                     // chưa kéo: một cái chạm nhẹ (kể cả gõ đúp khi đang phóng to) không bị coi là kéo ảnh
+                    var mode = 0                                            // hai ngón: 0 chưa rõ, 1 = thu phóng, 2 = xoay (quyết định ngay từ đầu cử chỉ, không trộn lẫn)
+                    var accAng = 0f; var accZoom = 0f
                     do {
                         val ev = awaitPointerEvent(PointerEventPass.Main)
                         if (ev.changes.size >= 2) panning = true
                         else if (scale > 1f && (ev.changes.first().position - down0.position).getDistance() > viewConfiguration.touchSlop) panning = true
-                        if (panning && (ev.changes.size >= 2 || scale > 1f)) {
+                        if (ev.changes.size >= 2 && mode == 0) {
+                            accAng += ev.calculateRotation(); accZoom += Math.abs(Math.log(ev.calculateZoom().toDouble())).toFloat()
+                            if (Math.abs(accAng) > 12f && Math.abs(accAng) * 0.0175f >= accZoom * 0.8f) mode = 2          // xoay rõ hơn chụm / giãn: chế độ xoay
+                            else if (accZoom > 0.1f) mode = 1                                                              // chụm / giãn rõ hơn: chế độ thu phóng
+                        } else if (ev.changes.size >= 2 && mode == 2) accAng += ev.calculateRotation()
+                        if (mode == 2) { liveRot = accAng; ev.changes.forEach { if (it.positionChanged()) it.consume() } }
+                        else if (panning && (ev.changes.size >= 2 && mode != 0 || ev.changes.size < 2 && scale > 1f)) {
                             val zoom = ev.calculateZoom()
-                            if (ev.changes.size >= 2) rot += ev.calculateRotation()                 // hai ngón xoay ảnh
                             val c0 = ev.calculateCentroid(useCurrent = false)
                             val c1 = ev.calculateCentroid(useCurrent = true)
                             if (c0 != Offset.Unspecified && c1 != Offset.Unspecified) {
@@ -2425,9 +2436,20 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
                             ev.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (ev.changes.any { it.pressed })
-                    val q = Math.round(rot / 90f) * 90f                                     // gần một góc vuông (±10°) thì tự nắn cho ngay ngắn
-                    if (Math.abs(rot - q) < 10f) rot = q
-                    Store.setRotation(uid, rot)
+                    if (mode == 2) {                                                        // thả tay: xoay đủ 25° thì quay ảnh đúng 90° theo chiều xoay, tự vừa khung
+                        val step = if (accAng >= 25f) 90f else if (accAng <= -25f) -90f else 0f
+                        val from = rot + liveRot
+                        val to = rot + step
+                        liveRot = 0f
+                        zoomJob?.cancel()
+                        scale = 1f; offset = Offset.Zero; onZoom(false)
+                        zoomJob = zoomScope.launch {
+                            val a = Animatable(0f)
+                            a.animateTo(1f, tween(180)) { rot = from + (to - from) * value }
+                            rot = to
+                        }
+                        Store.setRotation(uid, to)
+                    }
                 }
             },
         contentAlignment = Alignment.Center
@@ -2441,7 +2463,7 @@ fun ZoomImage(uid: String, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
             val dw = if (ar >= W / H) W else H * ar; val dh = if (ar >= W / H) W / ar else H
             val rad = Math.toRadians(rot.toDouble()); val c = Math.abs(Math.cos(rad)).toFloat(); val sn = Math.abs(Math.sin(rad)).toFloat()
             val fit = minOf(1f, W / (dw * c + dh * sn), H / (dw * sn + dh * c))
-            Image(b.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { scaleX = scale * fit; scaleY = scale * fit; rotationZ = rot; translationX = offset.x; translationY = offset.y }, contentScale = ContentScale.Fit)
+            Image(b.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { scaleX = scale * fit; scaleY = scale * fit; rotationZ = rot + liveRot; translationX = offset.x; translationY = offset.y }, contentScale = ContentScale.Fit)
         }
     }
 }

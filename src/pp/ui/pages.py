@@ -1365,16 +1365,32 @@ class LetterTabs(QScrollArea):
         self.cur = None
 
     def set_letters(self, counts):
+        self._counts = dict(counts)
         for ch, b in self.btns.items():
             n = counts.get(ch, 0)
             b.setEnabled(n > 0)
             b.setVisible(n > 0 or ch in ("♥", "All"))                       # chữ cái chưa có ai thì ẩn hẳn, có người mới hiện ra
             b.setToolTip(f"{n} người" if n else "Không có")
+        self._label_buttons()
+
+    def _label_buttons(self):
+        """Nút đang chọn hiện thêm tổng số người trong mục đó (A · 133, ♥ 12, # 40, All · 1.178)."""
+        counts = getattr(self, "_counts", {})
+        for ch, b in self.btns.items():
+            base = 44 if ch == "All" else 34
+            if ch == self.cur and counts.get(ch):
+                n = f"{counts[ch]:,}".replace(",", ".")
+                b.setText((" " if ch == "♥" else f"{ch}  ·  ") + n)
+                b.setFixedWidth(max(base, b.fontMetrics().horizontalAdvance(b.text()) + (44 if ch == "♥" else 26)))
+            else:
+                b.setText("" if ch == "♥" else ch)
+                b.setFixedWidth(base)
 
     def set_current(self, ch):
         self.cur = ch
         for c, b in self.btns.items():
             b.setChecked(c == ch)
+        self._label_buttons()
         b = self.btns.get(ch)
         if b is not None:
             self.ensureWidgetVisible(b, 60, 0)
