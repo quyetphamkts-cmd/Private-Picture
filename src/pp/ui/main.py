@@ -555,8 +555,10 @@ class MainWindow(QMainWindow):
                                GROUP BY p.id HAVING p.name IS NOT NULL OR COUNT(DISTINCT f.image_id)>=2)""")["c"]
             photos = db.one("SELECT COUNT(*) c FROM images WHERE id NOT IN (SELECT image_id FROM dup_hidden)")["c"]
             from .. import cluster
-            sig = db.library_sig()
-            if getattr(self, "_combo_sig", None) != sig:                  # đếm Mashup khá nặng: chỉ tính lại khi thư viện thật sự đổi
+            f = db.one("SELECT COUNT(*) a, COALESCE(MAX(id),0) b FROM faces")
+            sig = (f["a"], f["b"], db.one("SELECT COUNT(*) c FROM image_body")["c"], db.one("SELECT COUNT(*) c FROM dup_hidden")["c"],
+                   db.get_meta("mashup_min_score"), db.get_meta("mashup_small_ratio"))      # Mashup chỉ phụ thuộc mặt, ảnh người và ảnh trùng: xác nhận ảnh vào một người không làm tính lại
+            if getattr(self, "_combo_sig", None) != sig:                  # đếm Mashup khá nặng: chỉ tính lại khi dữ liệu đó thật sự đổi
                 self._combo_cache = sum(len(v) for v in cluster.mashup_by_count(db).values())
                 self._combo_sig = sig
             combos = self._combo_cache

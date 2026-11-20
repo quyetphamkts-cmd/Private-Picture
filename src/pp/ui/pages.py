@@ -2162,36 +2162,55 @@ class PeoplePage(Page):
         """Các tên đề xuất cho người chưa đặt tên: [{name, pid (người đã có tên khớp, nếu có), sub}]."""
         return [] if name else cluster.candidate_names(self.ctx.db, self.pid)
 
-    def _cand_pixmap(self, pid):
-        """Ảnh profile của một người (từ giữa đùi lên, như ảnh đại diện); không có thì khuôn mặt đã cắt sẵn."""
+    def _cand_pixmap(self, pid, big=False):
+        """Ảnh profile của một người (từ giữa đùi lên). Ô nhỏ ở đầu trang cắt từ ảnh nhỏ (nhanh, không đọc ảnh gốc); nửa so sánh khi xem ảnh (big) dùng bản làm sẵn / ảnh gốc.
+        Có nhớ sẵn theo người nên xác nhận ảnh xong làm mới trang không phải tính lại."""
         if pid is None:
             return None
+        key = (pid, big)
+        cache = self.__dict__.setdefault("_pm_cache", {})
+        if key in cache:
+            return cache[key]
         db = self.ctx.db
+        pm = None
         try:
             pick = db.cover_pick(pid, cover.KIND)
             if pick:
-                b = cover.profile_cached(db, pick["fid"], pick["thumb"], (pick["x"], pick["y"], pick["w"], pick["h"]), pick["path"], 300,
-                                         lambda row={"id": pick["iid"], "path": pick["path"]}: sync.read_original_any(db, row))
-                pm = QPixmap()
-                if b and pm.loadFromData(b):
-                    return pm
-            ft = db.person_cover(pid)
-            if ft:
-                pm = QPixmap()
-                if pm.loadFromData(SEC.read_file(ft)):
-                    return pm
+                box = (pick["x"], pick["y"], pick["w"], pick["h"])
+                if big:
+                    b = cover.profile_cached(db, pick["fid"], pick["thumb"], box, pick["path"], 800,
+                                             lambda row={"id": pick["iid"], "path": pick["path"]}: sync.read_original_any(db, row))
+                else:
+                    b = cover.pooled_bytes(db, pick["fid"], 300) or cover.thigh_bytes(pick["thumb"], box, None, 300, None)
+                q = QPixmap()
+                if b and q.loadFromData(b):
+                    pm = q
+            if pm is None:
+                ft = db.person_cover(pid)
+                if ft:
+                    q = QPixmap()
+                    if q.loadFromData(SEC.read_file(ft)):
+                        pm = q
         except Exception:
-            pass
-        return None
+            pm = None
+        if len(cache) > 60:
+            cache.clear()
+        cache[key] = pm
+        return pm
 
     def _build_candidates(self, name, sg, cands):
+        lst = self._candidate_list(name, sg, cands)
+        sig = [(c["name"], c.get("pid"), c.get("sub")) for c in lst]
+        if sig and sig == getattr(self, "_cand_sig", None) and self.cand_cards:      # danh sách tên đề xuất không đổi (ví dụ vừa xác nhận ảnh): giữ nguyên các ô, không dựng lại
+            self.cand_strip.setVisible(True)
+            return
+        self._cand_sig = sig
         for c in self.cand_cards:
             c.setParent(None)
             c.deleteLater()
         self.cand_cards = []
         while self.cand_lay.count():
             self.cand_lay.takeAt(0)
-        lst = self._candidate_list(name, sg, cands)
         for c in lst:
             card = CandCard(c, self._cand_pixmap(c.get("pid")))
             card.picked.connect(self._cand_picked)
@@ -2258,10 +2277,7 @@ class PeoplePage(Page):
         c = self.cand_sel
         if not c or not self.cand_cards:
             return None
-        pm = None
-        for card in self.cand_cards:
-            if card.cand["name"] == c["name"] and card.av.pixmap() is not None and not card.av.pixmap().isNull():
-                pm = self._cand_pixmap(c.get("pid"))
+        pm = self._cand_pixmap(c.get("pid"), big=True)
         items = []
         if c.get("pid"):                                           # các ảnh khác của người đó để vuốt chuyển so sánh (tối đa 60, mới nhất trước)
             items = [img_item(x) for x in self.ctx.db.person_images(c["pid"])[:60]]

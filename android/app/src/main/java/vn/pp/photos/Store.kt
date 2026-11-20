@@ -572,7 +572,7 @@ object Store {
     }
 
     /** Gửi lại ngay các thao tác chưa gửi được (mất mạng, Drive lỗi tạm thời): gọi định kỳ và khi mở lại app, để PC nhận thay đổi sớm nhất có thể. */
-    suspend fun flushUnsent() {
+    suspend fun flushUnsent() = withContext(Dispatchers.IO) {           // toàn bộ chạy ngoài luồng giao diện: hàng đợi lớn không còn làm đơ app mỗi 8 giây
         val todo = synchronized(pendLock) { loadPending().filter { !it.sent } }
         for (p in todo) if (upload(p)) markSent(p.name) else break
     }
@@ -743,7 +743,7 @@ object Store {
     private suspend fun commit(ops: JSONArray) {
         applyOps(ops)                                              // áp dụng trên điện thoại NGAY: giao diện đổi tức thì
         version++
-        val p = enqueue(ops)                                       // ghi vào hàng đợi trên điện thoại NGAY (không mất nếu tắt app hoặc mất mạng ngay sau đó)
+        val p = withContext(Dispatchers.IO) { enqueue(ops) }       // ghi vào hàng đợi trên điện thoại NGAY (không mất nếu tắt app hoặc mất mạng ngay sau đó); đọc / ghi hàng đợi chạy ngoài luồng giao diện
         bgScope.launch { try { if (upload(p)) markSent(p.name) } catch (e: Exception) { } }          // gửi lên Drive ở nền, không bắt người dùng chờ mạng
     }
 
