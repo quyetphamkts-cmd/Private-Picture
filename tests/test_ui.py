@@ -1186,3 +1186,27 @@ def test_unnamed_person_candidates_confirm_and_undo(tmp_path, monkeypatch):
     assert page.pid == named
     page.back()                                                             # ← về trang người chưa đặt tên
     assert page.pid == unk
+
+
+def test_compare_half_browses_other_photos_of_the_person(tmp_path, monkeypatch):
+    from PySide6.QtGui import QImage, QPixmap
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.common import Viewer
+    QApplication.instance() or QApplication([])
+    img = QImage(40, 60, QImage.Format_RGB32)
+    img.fill(0x336699)
+    pm = QPixmap.fromImage(img)
+    cmp = {"name": "Cleo", "pid": 1, "pixmap": pm, "items": [{"id": 10}, {"id": 11}]}
+    items = [{"id": i, "key": f"k{i}", "thumb": None, "w": 40, "h": 60} for i in range(3)]
+    v = Viewer(items, 0, lambda it: img, None, compare=cmp)
+    v.resize(900, 600)
+    v.show()
+    QApplication.processEvents()
+    assert v._cmp_count() == 3 and v.cmp_i == 0 and not v.cmp_prev.isEnabled()
+    v._cmp_step(1)
+    v._cmp_step(1)
+    v._cmp_step(1)                                                          # không vượt quá ảnh cuối
+    assert v.cmp_i == 2 and not v.cmp_next.isEnabled() and "3 / 3" in v.cmp_name.text()
+    v._cmp_step(-5)
+    assert v.cmp_i == 0
+    v.close()

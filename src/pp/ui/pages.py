@@ -2262,7 +2262,10 @@ class PeoplePage(Page):
         for card in self.cand_cards:
             if card.cand["name"] == c["name"] and card.av.pixmap() is not None and not card.av.pixmap().isNull():
                 pm = self._cand_pixmap(c.get("pid"))
-        return {"name": c["name"], "pid": c.get("pid"), "pixmap": pm}
+        items = []
+        if c.get("pid"):                                           # các ảnh khác của người đó để vuốt chuyển so sánh (tối đa 60, mới nhất trước)
+            items = [img_item(x) for x in self.ctx.db.person_images(c["pid"])[:60]]
+        return {"name": c["name"], "pid": c.get("pid"), "pixmap": pm, "items": items}
 
     def show_person(self):
         r = self.ctx.db.one("SELECT name FROM persons WHERE id=?", (self.pid,))

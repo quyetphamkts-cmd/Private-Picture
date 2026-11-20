@@ -1284,6 +1284,31 @@ class StripDelegate(QStyledItemDelegate):
         return QSize(72, 72)
 
 
+class CmpBox(QLabel):
+    """Nửa so sánh: lăn chuột hoặc kéo ngang (vuốt) để chuyển ảnh của người đang so sánh."""
+    stepped = Signal(int)
+
+    def __init__(self):
+        super().__init__()
+        self._x0 = None
+
+    def wheelEvent(self, e):
+        d = e.angleDelta().y()
+        if d:
+            self.stepped.emit(-1 if d > 0 else 1)
+        e.accept()
+
+    def mousePressEvent(self, e):
+        self._x0 = e.position().x()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._x0 is not None and abs(e.position().x() - self._x0) > 60:
+            self.stepped.emit(1 if e.position().x() < self._x0 else -1)
+        self._x0 = None
+        super().mouseReleaseEvent(e)
+
+
 class Viewer(QDialog):
     """Xem ảnh kiểu Google Ảnh: nền tối, ảnh vừa khung, dải ảnh nhỏ phía dưới; nút toàn màn hình (F11) ẩn dải ảnh và thanh công cụ tự ẩn.
     ← → chuyển ảnh (ảnh kế bên được nạp trước nên chuyển tức thì) · cuộn chuột hoặc nhấn giữ chuột trái rồi kéo lên/xuống để thu phóng
@@ -1320,7 +1345,9 @@ class Viewer(QDialog):
         body = QHBoxLayout()                                 # chia đôi theo chiều ngang khi có ảnh profile để so sánh: trái ảnh profile, phải ảnh đang xem
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        self.cmp_box = QLabel()
+        self.cmp_box = CmpBox()
+        self.cmp_i = 0                                       # 0 = ảnh profile; 1.. = các ảnh khác của người đang so sánh (vuốt / lăn chuột / mũi tên để chuyển)
+        self.cmp_box.stepped.connect(self._cmp_step)
         self.cmp_box.setAlignment(Qt.AlignCenter)
         self.cmp_box.setStyleSheet("background:#0C0A08")
         body.addWidget(self.cmp_box, 1)
@@ -1354,6 +1381,13 @@ class Viewer(QDialog):
         self.btn_add = RoundBtn("person+", "Thêm ảnh này vào một người…")
         self.btn_add.clicked.connect(lambda: self.add_fn(self.items[self.i], self) if self.add_fn else None)
         self.btn_add.setVisible(add is not None)
+        self.cmp_prev = RoundBtn("back", "Ảnh trước của người này")
+        self.cmp_next = RoundBtn("next", "Ảnh kế của người này")
+        for b, d in ((self.cmp_prev, -1), (self.cmp_next, 1)):
+            b.setParent(self)
+            b.setFixedSize(40, 40)
+            b.clicked.connect(lambda _=False, d=d: self._cmp_step(d))
+            b.setVisible(bool(compare and len(compare.get("items") or []) > 0))
         self.cmp_name = QPushButton()                            # tên người đang so sánh (bấm để mở trang người đó), nằm dưới ảnh profile
         self.cmp_name.setParent(self)
         self.cmp_name.setCursor(Qt.PointingHandCursor)
@@ -1461,6 +1495,26 @@ class Viewer(QDialog):
         self.show_current()
 
     # ---- thanh điều khiển tự ẩn ----
+    def _cmp_count(self):
+        return 1 + len((self.compare or {}).get("items") or [])
+
+    def _cmp_step(self, d):
+        if not self.compare:
+            return
+        n = self._cmp_count()
+        self.cmp_i = max(0, min(n - 1, self.cmp_i + d))
+        self._layout_overlays()
+
+    def _cmp_pixmap(self):
+        """Ảnh đang hiện ở nửa so sánh: ảnh profile (0) hoặc một ảnh khác của người đó."""
+        if self.cmp_i == 0:
+            return self.compare.get("pixmap")
+        try:
+            it = self.compare["items"][self.cmp_i - 1]
+            return QPixmap.fromImage(self.loader(it))
+        except Exception:
+            return None
+
     def _layout_overlays(self):
         self.top.setGeometry(0, 0, self.width(), self.top.height())
         self.foot.setGeometry(0, (self.view.height() or self.height()) - self.foot.height(), self.width(), self.foot.height())
@@ -1471,15 +1525,23 @@ class Viewer(QDialog):
         self.panel.raise_()
         h = self.view.height() or self.height()
         if self.compare:                                     # nửa trái: ảnh profile vừa khung, tên bấm được ngay dưới
-            pm = self.compare.get("pixmap")
+            pm = self._cmp_pixmap()
             hw = self.width() // 2
             if pm is not None and not pm.isNull():
                 self.cmp_box.setPixmap(pm.scaled(max(50, hw - 60), max(50, h - 190), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
                 self.cmp_box.setText("Chưa có ảnh profile")
+            n = self._cmp_count()
+            self.cmp_name.setText(self.compare["name"] + (f"   {self.cmp_i + 1} / {n}" if n > 1 else ""))
             self.cmp_name.adjustSize()
             self.cmp_name.move(24, h - self.foot.height() - 64)
             self.cmp_name.raise_()
+            self.cmp_prev.move(14, (h - 40) // 2)
+            self.cmp_next.move(hw - 54, (h - 40) // 2)
+            self.cmp_prev.setEnabled(self.cmp_i > 0)
+            self.cmp_next.setEnabled(self.cmp_i < n - 1)
+            self.cmp_prev.raise_()
+            self.cmp_next.raise_()
         self.prev_b.move((self.width() // 2 if self.compare else 0) + 18, (h - 48) // 2)
         self.next_b.move(self.width() - 66, (h - 48) // 2)
         self.top.raise_()

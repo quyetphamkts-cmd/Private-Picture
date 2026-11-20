@@ -82,6 +82,11 @@ class RoundBtn(QPushButton):
             path.lineTo(c.x() + 4 * u, c.y() + 8 * u)
             p.drawPath(path)
             p.drawLine(QPointF(c.x() - 6 * u, c.y()), QPointF(c.x() + 9 * u, c.y()))
+        elif k == "next":
+            path = QPainterPath(QPointF(c.x() - 4 * u, c.y() - 8 * u))
+            path.lineTo(c.x() + 6 * u, c.y())
+            path.lineTo(c.x() - 4 * u, c.y() + 8 * u)
+            p.drawPath(path)
         elif k == "close":
             p.drawLine(QPointF(c.x() - 7 * u, c.y() - 7 * u), QPointF(c.x() + 7 * u, c.y() + 7 * u))
             p.drawLine(QPointF(c.x() + 7 * u, c.y() - 7 * u), QPointF(c.x() - 7 * u, c.y() + 7 * u))
