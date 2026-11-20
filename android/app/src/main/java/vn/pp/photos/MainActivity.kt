@@ -435,6 +435,7 @@ fun Main() {
                                 try { Store.confirmImages(pp, cand.id, ids) } catch (e: Exception) { }
                                 Store.selected = Store.selected - ids.toSet()
                                 undo = UndoItem("Đã xác nhận ${ids.size} ảnh vào ${cand.name}", ids) { Store.unconfirmImages(pp, cand.id, ids) }
+                                Store.persons.firstOrNull { it.id == cand.id }?.let { cp -> if (s.ret == null) screen = Screen.PersonView(cp, pp) }          // mở luôn lưới ảnh của người vừa được xác nhận để kiểm tra; ← quay về trang trước
                             }
                         },
                         onOpenCand = { cp -> screen = Screen.PersonView(cp, s.p) }) { screen = s.ret?.let { Screen.PersonView(it) } ?: Screen.Tabs }

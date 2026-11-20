@@ -378,7 +378,7 @@ class PhotoGrid(QWidget):
         cmpi = pg.compare_for_viewer() if isinstance(pg, PeoplePage) and getattr(pg, "cand_cards", None) and self is not getattr(pg, "guess", None) else None
         conf = (lambda it: self.confirm_fn([it])) if self.confirm_fn else None
         if cmpi:                                                    # trang người chưa đặt tên: xem ảnh chia đôi với ảnh profile, ✓ đưa ảnh vào tên đang chọn
-            conf = lambda it: pg.confirm_selected([it])
+            conf = lambda it: pg.confirm_selected([it], goto=False)
         v = open_viewer(self.window(), self.model.items, i.row(), self.ctx, self.model, None if self.viewer_marks else self.grid.reveal,
                         isinstance(pg, PeoplePage), getattr(pg, "pid", None) if isinstance(pg, PeoplePage) else None,
                         compare=cmpi,
@@ -2316,7 +2316,7 @@ class PeoplePage(Page):
     def selected_images(self):
         return self.cur_grid().selected()
 
-    def confirm_selected(self, sel=None):
+    def confirm_selected(self, sel=None, goto=True):
         """✓: đưa các ảnh đã chọn (hoặc `sel`) vào tên đang chọn. Tên chưa có trang riêng thì đặt tên cho cả nhóm."""
         sel = sel if sel is not None else self.selected_images()
         c = self.cand_sel
@@ -2337,6 +2337,8 @@ class PeoplePage(Page):
         self.undo_t.start(30000)
         self.cur_grid().clear_sel()
         self.ctx.changed.emit()
+        if goto and self._return_pid is None:                    # xác nhận xong: mở luôn lưới ảnh của người vừa được xác nhận để kiểm tra lại; ← quay về trang trước
+            self.open_candidate(c)
 
     def open_candidate(self, cand):
         """Bấm tên đề xuất: mở trang ảnh của người đó để so; ← quay lại trang người chưa đặt tên."""

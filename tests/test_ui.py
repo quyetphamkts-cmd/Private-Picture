@@ -1179,7 +1179,10 @@ def test_unnamed_person_candidates_confirm_and_undo(tmp_path, monkeypatch):
     page.confirm_selected(sel)
     pid_of = lambda i: ctx.db.one("SELECT person_id FROM faces WHERE image_id=? AND locked=1 AND lsrc='user'", (i,))
     assert pid_of(ims[1])["person_id"] == named and pid_of(ims[2])["person_id"] == named
+    assert page.pid == named and page._return_pid == unk                      # xác nhận xong: tự mở lưới ảnh của người vừa được xác nhận
     assert page.undo_bar.isVisibleTo(page) and "2 ảnh" in page.undo_lab.text()
+    page.back()                                                              # ← về trang người chưa đặt tên
+    assert page.pid == unk
     page.undo_remove()                                                      # hoàn tác phòng chọn nhầm
     assert pid_of(ims[1]) is None and ctx.db.one("SELECT person_id FROM faces WHERE image_id=? AND person_id=?", (ims[1], unk))
     page.open_candidate(page.cand_cards[0].cand)                           # bấm tên: mở trang người đó
