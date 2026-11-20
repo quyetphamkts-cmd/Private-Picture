@@ -640,12 +640,16 @@ object Store {
         return l
     }
 
+    /** Đếm lại số ảnh của từng người: MỘT lượt qua mọi liên kết ảnh-người (trước đây mỗi người quét lại cả thư viện: hàng chục triệu phép so sánh cho mỗi ảnh xác nhận, làm treo máy). */
     private fun recountPersons() {
-        persons = persons.map { p -> Person(p.id, p.name, personOf.values.count { it.contains(p.id) }.let { c -> if (c > 0 || p.name.isEmpty()) c else p.pcN }, p.sug, p.sugN, p.pcN, p.cands) }
+        val cnt = HashMap<Int, Int>(persons.size * 2)
+        for (l in personOf.values) for (id in l) cnt[id] = (cnt[id] ?: 0) + 1
+        persons = persons.map { p -> Person(p.id, p.name, (cnt[p.id] ?: 0).let { c -> if (c > 0 || p.name.isEmpty()) c else p.pcN }, p.sug, p.sugN, p.pcN, p.cands) }
     }
 
     /** Áp dụng các thao tác lên dữ liệu trong bộ nhớ (dùng cho cả thao tác mới và các thay đổi chưa được PC xử lý). */
     private fun applyOps(ops: JSONArray) {
+        var dirty = false                                          // đếm lại số ảnh mỗi người ĐÚNG MỘT LẦN sau khi áp dụng xong cả loạt thao tác (chọn nhiều ảnh rồi xác nhận)
         for (i in 0 until ops.length()) {
             val o = ops.getJSONObject(i)
             when (o.getString("op")) {
@@ -675,14 +679,14 @@ object Store {
                     val a = o.getInt("src_id"); val b = o.getInt("dst_id")
                     for (l in personOf.values) if (l.remove(a) && !l.contains(b)) l.add(b)
                     persons = persons.filter { it.id != a }
-                    recountPersons()
+                    dirty = true
                 }
                 "cloth_set" -> clothing = clothing + (o.getString("image_uid") to o.getString("grp"))
                 "cloth_clear" -> clothing = clothing - o.getString("image_uid")
                 "person_hide" -> persons = persons.filter { it.id != o.getInt("person_id") }
                 "person_remove" -> {
                     personOf[o.getString("image_uid")]?.remove(o.getInt("person_id"))
-                    recountPersons()
+                    dirty = true
                 }
                 "guess_accept", "guess_reject" -> {                       // xác nhận đúng / không phải người này: ảnh hết là đề xuất
                     val pid = o.getInt("person_id"); val u = o.getString("image_uid")
@@ -691,7 +695,7 @@ object Store {
                     if (o.getString("op") == "guess_accept") {
                         val l = personOf.getOrPut(u) { mutableListOf() }
                         if (!l.contains(pid)) l.add(pid)
-                        recountPersons()
+                        dirty = true
                     }
                 }
                 "person_fav" -> {                                          // trái tim người (đồng bộ hai chiều)
@@ -702,13 +706,13 @@ object Store {
                     val pid = o.getInt("person_id"); val u = o.getString("image_uid")
                     personOf[u]?.remove(pid)
                     if ((guesses[pid] ?: emptyList()).none { it.first == u }) guesses = guesses + (pid to ((guesses[pid] ?: emptyList()) + (u to (guessMemo["$u|$pid"] ?: 0.5f))))
-                    recountPersons()
+                    dirty = true
                 }
                 "person_restore", "person_add" -> {                       // hoàn tác loại nhầm / thêm ảnh vào một người
                     val pid = o.getInt("person_id")
                     val l = personOf.getOrPut(o.getString("image_uid")) { mutableListOf() }
                     if (!l.contains(pid)) l.add(pid)
-                    recountPersons()
+                    dirty = true
                 }
                 "person_confirm", "person_unconfirm" -> {                    // xác nhận ảnh của người chưa đặt tên vào một người có sẵn (và hoàn tác)
                     val from = o.getInt("from_person"); val to = o.getInt("to_person")
@@ -719,7 +723,7 @@ object Store {
                         l.remove(if (on) from else to)
                         if (!l.contains(if (on) to else from)) l.add(if (on) to else from)
                     }
-                    recountPersons()
+                    dirty = true
                 }
                 "person_create" -> {                                       // tạo người mới từ các ảnh đã chọn (mã tạm trên điện thoại, PC cấp mã thật khi đồng bộ)
                     val tid = o.optInt("temp_id", -1)
@@ -729,10 +733,11 @@ object Store {
                         val l = personOf.getOrPut(us.getString(i)) { mutableListOf() }
                         if (!l.contains(tid)) l.add(tid)
                     }
-                    recountPersons()
+                    dirty = true
                 }
             }
         }
+        if (dirty) recountPersons()
     }
 
     private suspend fun commit(ops: JSONArray) {
