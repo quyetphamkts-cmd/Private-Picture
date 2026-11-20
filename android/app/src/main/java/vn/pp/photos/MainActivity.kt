@@ -739,6 +739,20 @@ fun TopBar(modifier: Modifier, left: @Composable RowScope.() -> Unit, center: @C
     }
 }
 
+/** Nút nổi ở đáy danh sách ảnh đề xuất: chọn tất cả ảnh đang hiện / bỏ chọn tất cả (để xác nhận cả loạt cho nhanh). */
+@Composable
+fun SelectAllChip(shown: Collection<String>, modifier: Modifier = Modifier) {
+    if (shown.isEmpty()) return
+    val sel = Store.selected
+    val picked = shown.count { it in sel }
+    val all = picked == shown.size
+    Row(modifier.clip(CircleShape).background(Color(0xEB221E17)).border(1.dp, Brass, CircleShape)
+        .clickable { Store.selected = if (all) sel - shown.toSet() else sel + shown }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(if (all) "Bỏ chọn tất cả" else "Chọn tất cả (${shown.size})", color = Color(0xFFE5C07B), fontSize = 13.sp)
+        if (picked > 0 && !all) Text("  ·  đã chọn $picked", color = Color(0xFFA8A190), fontSize = 12.sp)
+    }
+}
+
 /** Ô dài gộp 3 nút Dressed | Naked | All ở giữa hàng nút phía trên ảnh (nền đen mờ như các nút tròn, ô đang chọn tô màu vàng đồng). */
 @Composable
 fun ClothPill(cloth: String?, selecting: Boolean, third: String? = null, thirdOn: Boolean = false, onThird: () -> Unit = {}, showThird: Boolean = true, thirdKind: String? = null, onPick: (String?) -> Unit) {
@@ -1855,6 +1869,7 @@ fun PersonScreen(p: Person, openIn: (List<Img>, Int) -> Unit, onClassify: (Strin
         } else {
             TimelineGrid(list, open, null, topBarSpace() + stripH, posKey = "p${p.id}${cloth ?: ""}", actions = acts)
         }
+        if (hasCands) SelectAllChip(shownUids, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
         if (hasCands) Column(Modifier.align(Alignment.TopCenter).padding(top = topBarSpace()).fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (c in p.cands) {
@@ -1950,6 +1965,7 @@ fun SuggestScreen(p: Person, open: (List<Img>, Int) -> Unit, onAccept: () -> Uni
             }
         }
         if (list.isEmpty()) Text("Không còn ảnh nào cần xác nhận.", Modifier.padding(top = topBarSpace() + 30.dp, start = 16.dp), color = Color.Gray)
+        SelectAllChip(list.map { it.uid }, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
         val selecting = Store.selected.any { it in uidIndex }                  // chưa chọn ảnh: chỉ hiện hai nút ngoài cùng (✕ và Enter); chọn ảnh rồi mới hiện các nút lệnh còn lại
         TopBar(Modifier.align(Alignment.TopStart),
             left = {

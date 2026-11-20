@@ -474,6 +474,12 @@ class PhotoGrid(QWidget):
         if self.confirm_cb:
             self.confirm_cb()
 
+    def total_count(self):
+        return len(self.model.items)
+
+    def select_all_shown(self):
+        self.grid.select_all()
+
     def classify_selected(self, code):
         """Đang chọn ảnh: bấm Dressed / Naked để phân loại luôn các ảnh đã chọn. Trả về True nếu đã xử lý (có ảnh được chọn)."""
         ids = [x["id"] for x in self.selected()]
@@ -847,6 +853,39 @@ class CandCard(QFrame):
         super().mousePressEvent(e)
 
 
+class SelectAllChip(QPushButton):
+    """Nút nổi ở đáy danh sách ảnh đề xuất: Chọn tất cả / Bỏ chọn tất cả (có số ảnh đã chọn). `src` là PhotoGrid hoặc GroupedPhotos."""
+
+    def __init__(self, src):
+        super().__init__()
+        self.src = src
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("QPushButton{background:rgba(34,30,23,235);color:#E5C07B;border:1px solid #A9793D;border-radius:20px;padding:9px 18px;font-weight:600}"
+                           "QPushButton:hover{background:#3A3226}")
+        self.clicked.connect(self._toggle)
+        src.selCountChanged.connect(lambda _: self.refresh_text())
+        self.refresh_text()
+
+    def _total(self):
+        return self.src.total_count() if hasattr(self.src, "total_count") else 0
+
+    def refresh_text(self):
+        total, n = self._total(), self.src.sel_count()
+        self.setText("Bỏ chọn tất cả" if (total and n >= total) else f"Chọn tất cả ({total})" + (f"  ·  đã chọn {n}" if n else ""))
+        self.adjustSize()
+        self.setVisible(total > 0)
+        if self.parent() is not None and hasattr(self.parent(), "_place"):
+            self.parent()._place()
+
+    def _toggle(self):
+        total, n = self._total(), self.src.sel_count()
+        if total and n >= total:
+            self.src.clear_sel()
+        else:
+            self.src.select_all_shown()
+        self.refresh_text()
+
+
 class OverlayHost(QWidget):
     """Trang có nút nổi cố định ở giữa mép dưới (nút hình người báo ảnh đề xuất)."""
 
@@ -856,13 +895,20 @@ class OverlayHost(QWidget):
 
     def add_bottom_center(self, w):
         w.setParent(self)
-        self._floaters.append(w)
+        self._floaters.append((w, "c"))
+        w.raise_()
+        self._place()
+
+    def add_bottom_left(self, w):
+        w.setParent(self)
+        self._floaters.append((w, "l"))
         w.raise_()
         self._place()
 
     def _place(self):
-        for w in self._floaters:
-            w.move((self.width() - w.width()) // 2, self.height() - w.height() - int(0.25 * w.height()))       # cách thanh tab phía dưới 0,25 lần đường kính nút
+        for w, where in self._floaters:
+            x = (self.width() - w.width()) // 2 if where == "c" else 18
+            w.move(x, self.height() - w.height() - int(0.25 * max(w.height(), 44)))       # cách thanh tab phía dưới 0,25 lần đường kính nút
             w.raise_()
 
     def resizeEvent(self, e):
@@ -1506,6 +1552,14 @@ class GroupedPhotos(QWidget):
         if sel and self.remove_fn:
             self.remove_fn(sel)
 
+    def total_count(self):
+        return sum(pg.model.rowCount() for _, pg, _ in self.parts.values() if not pg.isHidden())
+
+    def select_all_shown(self):
+        for _, pg, _ in self.parts.values():
+            if not pg.isHidden():
+                pg.grid.select_all()
+
     def run_confirm(self):
         if self.confirm_cb:
             self.confirm_cb()
@@ -1659,6 +1713,8 @@ class FavoritesPage(LibraryPage):
 
 
 class PeoplePage(Page):
+    selCountChanged = Signal(int)                      # (cho nút Chọn tất cả ở đáy trang người: theo dõi số ảnh đã chọn của lưới đang hiện)
+
     def __init__(self, ctx):
         super().__init__(ctx)
         self.pid = None
@@ -1843,6 +1899,7 @@ class PeoplePage(Page):
         for g in (self.grouped, self.photos):
             g.cand_ok = lambda: bool(self.cand_cards)                       # có tên đề xuất: hiện nút ✓ khi đang chọn ảnh
             g.confirm_cb = self.confirm_selected
+            g.selCountChanged.connect(self.selCountChanged)
         self.pbar.set_src(self.grouped)
         l2.addWidget(self.pstack, 1)
         self.sug_btn = RoundBtn("person", "Ảnh app chưa chắc là của người này: bấm để xem và xác nhận đúng / sai")      # nút hình người nhấp nháy: chỉ hiện khi còn ảnh đề xuất
@@ -1852,9 +1909,12 @@ class PeoplePage(Page):
         for g in (self.grouped, self.photos):
             g.selCountChanged.connect(lambda n: self.sug_btn.setVisible(n == 0 and self._n_guess > 0))
         self._n_guess = 0
+        self.sel_chip = SelectAllChip(self)                  # chọn tất cả / bỏ chọn tất cả (chỉ hiện khi có tên đề xuất để xác nhận)
+        w2.add_bottom_left(self.sel_chip)
+        self.sel_chip.hide()
         self.stack.addWidget(w2)
         # trang ảnh đề xuất của một người: ← | Dressed | Naked | ✓ (xác nhận ảnh đã chọn)
-        w3 = QWidget()
+        w3 = OverlayHost()
         l3 = QVBoxLayout(w3)
         l3.setContentsMargins(0, 0, 0, 0)
         l3.setSpacing(0)
@@ -1869,6 +1929,8 @@ class PeoplePage(Page):
         self.glabel.setStyleSheet("font-weight:700;color:#A9793D;font-size:14px;padding:0 16px 4px 16px")
         self.guess.layout().insertWidget(1, self.glabel)
         l3.addWidget(self.guess, 1)
+        self.guess_chip = SelectAllChip(self.guess)
+        w3.add_bottom_center(self.guess_chip)
         self.stack.addWidget(w3)
 
     def refresh(self):
@@ -2152,6 +2214,19 @@ class PeoplePage(Page):
         """Nguồn ảnh đang hiện ở trang một người (lưới chia cụm hoặc lưới thường)."""
         return self.pstack.currentWidget()
 
+    # --- giao diện cho nút Chọn tất cả (SelectAllChip): chuyển cho lưới đang hiện
+    def sel_count(self):
+        return self.cur_grid().sel_count()
+
+    def total_count(self):
+        return self.cur_grid().total_count()
+
+    def select_all_shown(self):
+        self.cur_grid().select_all_shown()
+
+    def clear_sel(self):
+        self.cur_grid().clear_sel()
+
     def open_suggest(self):
         self.stack.setCurrentIndex(2)
 
@@ -2359,6 +2434,9 @@ class PeoplePage(Page):
         self.sug_btn.setVisible(bool(gs) and self.cur_grid().sel_count() == 0)
         self.glabel.setText(f"Có thể là {self._title}  ·  {len(gs)} ảnh app chưa chắc chắn")
         self.guess.set_items([img_item(x, {"cap_tag": f"khớp {int(x['score'] * 100)}%"}) for x in gs])
+        self.sel_chip.setVisible(bool(self.cand_cards))
+        self.sel_chip.refresh_text()
+        self.guess_chip.refresh_text()
         self.stack.setCurrentIndex(2 if (self.stack.currentIndex() == 2 and gs) else 1)
 
     def back(self):

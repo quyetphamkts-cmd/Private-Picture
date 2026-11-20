@@ -1210,3 +1210,29 @@ def test_compare_half_browses_other_photos_of_the_person(tmp_path, monkeypatch):
     v._cmp_step(-5)
     assert v.cmp_i == 0
     v.close()
+
+
+def test_select_all_chip_on_suggestion_lists(tmp_path, monkeypatch):
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    from pp.db import vec_to_blob
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import PeoplePage
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "sa"))
+    ctx = AppContext()
+    named = ctx.db.x("INSERT INTO persons(name) VALUES('Cleo Pham')").lastrowid
+    unk = ctx.db.x("INSERT INTO persons(name) VALUES(NULL)").lastrowid
+    for i in range(5):
+        iid = ctx.db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/s/{i}.jpg", 1, 1, 9, 9, "t")).lastrowid
+        ctx.db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id,locked) VALUES(?,?,?,?,?,?,?,?,?,0)",
+                 (iid, .1, .1, .2, .2, .95, 80, vec_to_blob(np.ones(128, np.float32)), unk))
+    ctx.db.x("INSERT INTO person_suggest(person_id,name,n_arch,n_img) VALUES(?,?,?,?)", (unk, "Cleo Pham", 3, 5))
+    page = PeoplePage(ctx)
+    page.pid = unk
+    page.show_person()
+    assert page.sel_chip.isVisibleTo(page) and "5" in page.sel_chip.text()
+    page.sel_chip.click()
+    assert page.sel_count() == 5 and "Bỏ chọn" in page.sel_chip.text()
+    page.sel_chip.click()
+    assert page.sel_count() == 0 and "Chọn tất cả" in page.sel_chip.text()
