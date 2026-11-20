@@ -2123,10 +2123,18 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF0C0A08))) {
         if (cmp != null) Box(Modifier.fillMaxWidth().fillMaxHeight(0.5f).align(Alignment.TopCenter).padding(top = 64.dp, bottom = 6.dp)) {
-            val cb by produceState<Bitmap?>(null, cmp.id) { value = if (cmp.id != 0) Store.cover(cmp.id) else null }
-            cb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
-            if (cb == null) Text("Chưa có ảnh profile", Modifier.align(Alignment.Center), color = Color.Gray)
-            Text(cmp.name, Modifier.align(Alignment.BottomStart).padding(start = 12.dp).clickable { Store.persons.firstOrNull { it.id == cmp.id }?.let { onPerson(it) } }, color = Color(0xFFE5C07B),
+            // nửa trên: ảnh profile của tên đang so sánh; vuốt ngang để xem các ảnh khác của người đó
+            val cmpUids = remember(cmp) { listOf<String?>(null) + Store.images.filter { Store.personOf[it.uid]?.contains(cmp.id) == true }.sortedByDescending { it.taken }.take(60).map { it.uid } }
+            val cmpPager = androidx.compose.foundation.pager.rememberPagerState { cmpUids.size }
+            HorizontalPager(cmpPager, Modifier.fillMaxSize(), key = { cmpUids[it] ?: "profile" }) { pg ->
+                val u = cmpUids[pg]
+                val cb by produceState<Bitmap?>(null, cmp.id, u) { value = if (u == null) (if (cmp.id != 0) Store.cover(cmp.id) else null) else Store.thumb(u) }
+                Box(Modifier.fillMaxSize()) {
+                    cb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
+                    if (cb == null) Text(if (u == null) "Chưa có ảnh profile" else "Đang tải…", Modifier.align(Alignment.Center), color = Color.Gray)
+                }
+            }
+            Text(cmp.name + if (cmpUids.size > 1) "   ${cmpPager.currentPage + 1} / ${cmpUids.size}" else "", Modifier.align(Alignment.BottomStart).padding(start = 12.dp).clickable { Store.persons.firstOrNull { it.id == cmp.id }?.let { onPerson(it) } }, color = Color(0xFFE5C07B),
                 style = MaterialTheme.typography.titleSmall.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
         }
         HorizontalPager(pager, if (cmp != null) Modifier.fillMaxWidth().fillMaxHeight(0.5f).align(Alignment.BottomCenter) else Modifier.fillMaxSize(), userScrollEnabled = !zoomed, key = { list[it].uid }) { page ->
