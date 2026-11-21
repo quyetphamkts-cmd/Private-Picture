@@ -2164,31 +2164,6 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
             // phía trên: một hàng nút giống hệt hàng nút ngoài danh sách ảnh — ✕ và Thêm vào tên ở góc trái, ô dài Dressed | Naked | All ở giữa,
             // Loại khỏi danh sách (khi mở từ trang một người) và Tới vị trí (phím Enter, thay chỗ nút ⋯) ở góc phải. Áp dụng cho ảnh đang xem.
             val curCloth = Store.clothing[cur.uid]
-            if (fromSuggest != null) {
-                // xem từ trang đề xuất: hàng nút giống hệt trang đề xuất — ✕ trái, ba nút tròn giữa (tick đúng người, người+ thêm vào tên, người− không phải người này), Enter phải
-                TopBar(Modifier.align(Alignment.TopCenter),
-                    left = { RoundBtn(onClick = closeAll) { BtnIcon("close") } },
-                    center = {
-                        val d = LocalBtn.current
-                        Row(horizontalArrangement = Arrangement.spacedBy(d * 0.25f)) {
-                            RoundBtn(onClick = {
-                                scope.launch {
-                                    removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid
-                                    try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
-                                    catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
-                                }
-                            }) { BtnIcon("tick") }
-                            RoundBtn(onClick = { pickDlg = true }) { BtnIcon("add") }
-                            RoundBtn(onClick = {
-                                scope.launch {
-                                    try { Store.guessReject(fromSuggest, listOf(cur.uid)); removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid; removedSuggest = true; acceptedSuggest = false; note = "Đã loại khỏi đề xuất" }
-                                    catch (e: Exception) { note = "Không loại được: ${e.message}" }
-                                }
-                            }) { BtnIcon("remove") }
-                        }
-                    },
-                    right = { RoundBtn(onClick = { onLocate(cur) }) { BtnIcon("enter") } })
-            } else
             TopBar(Modifier.align(Alignment.TopCenter),
                 left = {
                     RoundBtn(onClick = closeAll) { BtnIcon("close") }
@@ -2196,9 +2171,15 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
                 },
                 center = {
                     // khung xem ảnh: ô dài chỉ có Dressed | Naked (rộng 2 hình tròn); ngôi sao Yêu thích nằm ở góc dưới bên phải, cùng hàng với tên model
-                    ClothPill(curCloth, false, showThird = cmp != null, thirdKind = if (cmp != null) "tick" else null, onThird = {            // ✓: xác nhận ảnh đang xem vào tên đang so sánh
+                    ClothPill(curCloth, false, showThird = cmp != null || fromSuggest != null, thirdKind = if (cmp != null || fromSuggest != null) "tick" else null, onThird = {            // ✓: xác nhận ảnh đang xem (đúng người này khi xem từ trang đề xuất; vào tên đang so sánh khi so sánh)
                         val cc = cmp; val fp = fromPerson
-                        if (cc != null && fp != null) {
+                        if (fromSuggest != null) {
+                            scope.launch {
+                                removed = removed + cur.uid; lastRemoved = fromSuggest to cur.uid
+                                try { Store.guessAccept(fromSuggest, listOf(cur.uid)); removedSuggest = false; acceptedSuggest = true; note = "Đã xác nhận đúng" }
+                                catch (e: Exception) { note = "Không xác nhận được: ${e.message}" }
+                            }
+                        } else if (cc != null && fp != null) {
                             if (cc.id == 0) note = "“${cc.name}” chưa có trang riêng: hãy đặt tên cho nhóm này trên PC."
                             else scope.launch {
                                 try { Store.confirmImages(fp, cc.id, listOf(cur.uid)); removed = removed + cur.uid; confirmUndo = cur.uid; note = "Đã xác nhận vào ${cc.name}" }
