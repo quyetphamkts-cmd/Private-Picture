@@ -152,8 +152,8 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // chặn chụp màn hình và ẩn nội dung trong màn hình ứng dụng gần đây
-        window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
         Store.init(applicationContext)
+        applyScreenSecurity(window)
         launcher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
             try {
                 val r = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(res.data)
@@ -559,6 +559,12 @@ fun Main() {
         }) { Text("Tạo") } },
         dismissButton = { TextButton({ dlg = "" }) { Text("Hủy") } })
     if (note.isNotEmpty()) AlertDialog(onDismissRequest = { note = "" }, confirmButton = { TextButton({ note = "" }) { Text("Đóng") } }, title = { Text("Chọn ảnh tương tự") }, text = { Text(note) })
+}
+
+/** Chặn chụp màn hình (và Circle to Search / Google Lens) trừ khi người dùng bật "Cho phép tìm kiếm trên màn hình" trong Cài đặt. */
+fun applyScreenSecurity(window: android.view.Window) {
+    if (Store.screenSearch) window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    else window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
 }
 
 class UndoItem(val text: String, val uids: List<String>, val revert: suspend () -> Unit)
@@ -1819,6 +1825,18 @@ fun SettingsScreen() {
                 Button({ openLink(lt.second) }) { Text("Tải bản ${lt.first}") }
             }
             else -> Text("Bạn đang dùng phiên bản mới nhất ($ver)", color = Color.Gray)
+        }
+        var screenSearch by remember { mutableStateOf(Store.screenSearch) }
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Cho phép tìm kiếm trên màn hình (Google)", style = MaterialTheme.typography.bodyLarge)
+                Text(if (screenSearch) "Đang bật: Circle to Search / Google Lens hoạt động trên màn hình app, và chụp màn hình được. Hình đang hiện trên màn hình sẽ được gửi cho Google khi bạn dùng tìm kiếm."
+                     else "Đang tắt: app chặn chụp màn hình và Google tìm kiếm màn hình để bảo vệ ảnh riêng tư.", color = if (screenSearch) Color(0xFFFFB4A8) else Color.Gray, style = MaterialTheme.typography.bodySmall)
+            }
+            androidx.compose.material3.Switch(screenSearch, { on ->
+                screenSearch = on; Store.screenSearch = on
+                (ctx as? android.app.Activity)?.window?.let { applyScreenSecurity(it) }
+            })
         }
         val v = Store.version
         val upd = Store.indexUpdatedMs

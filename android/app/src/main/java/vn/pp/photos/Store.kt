@@ -127,6 +127,11 @@ object Store {
     var modelLetter: String
         get() = posPrefs.getString("letter", "") ?: ""
         set(v) { posPrefs.edit().putString("letter", v).apply() }
+    /** Cho phép Google (Circle to Search, Lens) và chụp màn hình hoạt động trên màn hình app. Mặc định TẮT: app chặn chụp màn hình để bảo vệ ảnh riêng tư. */
+    var screenSearch: Boolean
+        get() = viewPrefs.getBoolean("screen_search", false)
+        set(v) { viewPrefs.edit().putBoolean("screen_search", v).apply() }
+
     /** Góc xoay (độ) người dùng đã xoay ảnh khi xem bằng hai ngón tay: ảnh giữ theo hướng đó ở những lần xem sau. */
     fun rotationOf(uid: String): Float = rotPrefs.getFloat("r_$uid", 0f)
     fun setRotation(uid: String, deg: Float) {
