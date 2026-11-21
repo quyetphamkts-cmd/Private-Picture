@@ -1248,8 +1248,31 @@ def test_selected_letter_shows_people_count(tmp_path, monkeypatch):
     t = LetterTabs()
     t.set_letters({"A": 133, "B": 7, "♥": 12, "#": 40, "All": 1178})
     t.set_current("A")
-    assert "133" in t.btns["A"].text() and t.btns["B"].text() == "B"
+    assert "1/133" in t.btns["A"].text() and t.btns["B"].text() == "B"
     t.set_current("♥")
-    assert "12" in t.btns["♥"].text() and t.btns["A"].text() == "A"
+    assert "1/12" in t.btns["♥"].text() and t.btns["A"].text() == "A"
     t.set_current("All")
-    assert "1.178" in t.btns["All"].text()
+    t.set_position(4, 1178)
+    assert "4/1.178" in t.btns["All"].text()
+
+
+def test_letter_sections_report_first_visible_person_position(tmp_path, monkeypatch):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.pages import LetterSections
+    QApplication.instance() or QApplication([])
+    ls = LetterSections(128)
+    mk = lambda a, n: [{"pid": a + i, "key": f"p{a + i}", "label": f"N{a + i}\n1 ảnh", "thumb": None} for i in range(n)]
+    ls.resize(900, 500)
+    ls.show()
+    ls.set_cols(10)
+    ls.set_groups([("A", mk(1, 200))])
+    QTest.qWait(150)
+    got = []
+    ls.positionChanged.connect(lambda pos, tot: got.append((pos, tot)))
+    assert ls._top_position() == (1, 200)
+    ls.verticalScrollBar().setValue(ls.sections[0][0].y() + ls.sections[0][0].gridSize().height() * 2)          # cuộn xuống hai hàng
+    QTest.qWait(100)
+    pos, tot = ls._top_position()
+    per = max(1, (ls.viewport().width() - 40) // ls.sections[0][0].gridSize().width())
+    assert tot == 200 and pos == 2 * per + 1 and got and got[-1] == (pos, tot)

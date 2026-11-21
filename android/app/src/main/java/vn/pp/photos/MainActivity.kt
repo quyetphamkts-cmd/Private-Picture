@@ -1673,9 +1673,12 @@ fun PersonCard(p: Person, cover: String?, cols: Int, onOpen: (Person) -> Unit, n
 }
 
 @Composable
-fun PersonGrid(list: List<Person>, covers: Map<Int, String>, cols: Int, onOpen: (Person) -> Unit, header: String? = null, stateKey: String? = null, onZoom: ((Int) -> Unit)? = null) {
+fun PersonGrid(list: List<Person>, covers: Map<Int, String>, cols: Int, onOpen: (Person) -> Unit, header: String? = null, stateKey: String? = null, onZoom: ((Int) -> Unit)? = null, onFirst: ((Int) -> Unit)? = null) {
     val saved = remember(stateKey) { if (stateKey != null) Store.modelScrollOf(stateKey) else Pair(0, 0) }
     val gs = androidx.compose.foundation.lazy.grid.rememberLazyGridState(saved.first, saved.second)
+    LaunchedEffect(gs, header != null) {                              // số thứ tự người đầu tiên đang thấy (người 1, hàng 2 thì 4…) để hiện trên nút chữ cái: A - 4/200
+        if (onFirst != null) snapshotFlow { gs.firstVisibleItemIndex }.collect { idx -> onFirst(if (header != null) maxOf(1, idx) else idx + 1) }
+    }
     LaunchedEffect(gs, stateKey) {                                   // nhớ vị trí cuộn của từng chữ cái
         if (stateKey != null) snapshotFlow { gs.firstVisibleItemIndex to gs.firstVisibleItemScrollOffset }.collectLatest { (i, o) -> delay(300); Store.setModelScroll(stateKey, i, o) }
     }
@@ -1754,6 +1757,7 @@ fun ModelScreen(onOpen: (Person) -> Unit) {
         m
     }
     val keys = remember(byLetter) { byLetter.keys.toList() }
+    val posMap = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>() }           // người đầu tiên đang thấy ở mỗi chữ cái
     val covers = rememberCovers()
     val pager = androidx.compose.foundation.pager.rememberPagerState { keys.size.coerceAtLeast(1) }
     val scope = rememberCoroutineScope()
@@ -1772,8 +1776,8 @@ fun ModelScreen(onOpen: (Person) -> Unit) {
                 if (l == "♥") Row(Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(if (l == cur) Brass else Color(0x1A000000)).clickable { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }.padding(horizontal = 9.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     HeartIcon(true, Modifier.size(16.dp))                 // nút trái tim nằm trong hình tròn, trước chữ A
-                    if (l == cur) Text(" $cnt", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                } else FilterPill(if (l == cur) "$l · $cnt" else l, l == cur) { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }
+                    if (l == cur) Text(" ${(posMap[l] ?: 1).coerceAtMost(maxOf(cnt, 1))}/$cnt", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                } else FilterPill(if (l == cur) "$l - ${(posMap[l] ?: 1).coerceAtMost(maxOf(cnt, 1))}/$cnt" else l, l == cur) { scope.launch { pager.animateScrollToPage(keys.indexOf(l)) } }
             }
         }
         if (keys.size <= 1) Text("Chưa có ai trong thư viện.", Modifier.padding(16.dp), color = Color.Gray)
@@ -1781,7 +1785,7 @@ fun ModelScreen(onOpen: (Person) -> Unit) {
             val lk = keys.getOrNull(pg)
             val people = byLetter[lk] ?: emptyList()
             if (lk == "♥" && people.isEmpty()) Text("Chưa có ai trong danh sách yêu thích. Bấm hình trái tim trên thẻ người để thêm.", Modifier.padding(16.dp), color = Color.Gray)
-            else PersonGrid(people, covers, Store.modelCols, onOpen, if (lk != null) (if (lk == "♥") "♥  ·  ${people.size} người" else "$lk  ·  ${people.size} người") else null, lk) { Store.setModelColumns(it) }       // Model: 3–5 cột, chụm / giãn để đổi
+            else PersonGrid(people, covers, Store.modelCols, onOpen, if (lk != null) (if (lk == "♥") "♥  ·  ${people.size} người" else "$lk  ·  ${people.size} người") else null, lk, { Store.setModelColumns(it) }, { first -> if (lk != null) posMap[lk] = first })       // Model: 3–5 cột, chụm / giãn để đổi
         }
     }
     if (v < 0) Text("")

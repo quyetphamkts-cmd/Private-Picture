@@ -3,7 +3,7 @@ import os
 import re
 import time
 
-from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QSize, QThread, Qt, QTimer, Signal
 import numpy as np
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QPlainTextEdit, QApplication, QFrame, QScrollArea, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -1373,14 +1373,21 @@ class LetterTabs(QScrollArea):
             b.setToolTip(f"{n} người" if n else "Không có")
         self._label_buttons()
 
+    def set_position(self, pos, total):
+        """Thứ tự người đầu tiên đang thấy khi cuộn danh sách: nút đang chọn hiện A - 4/200."""
+        self._pos = (pos, total)
+        self._label_buttons()
+
     def _label_buttons(self):
-        """Nút đang chọn hiện thêm tổng số người trong mục đó (A · 133, ♥ 12, # 40, All · 1.178)."""
+        """Nút đang chọn hiện thêm thứ tự người đang thấy / tổng số người trong mục đó (A - 1/200, ♥ 1/12, # 1/40, All - 1/1.178)."""
         counts = getattr(self, "_counts", {})
+        pos, tot = getattr(self, "_pos", (1, 0))
         for ch, b in self.btns.items():
             base = 44 if ch == "All" else 34
             if ch == self.cur and counts.get(ch):
-                n = f"{counts[ch]:,}".replace(",", ".")
-                b.setText((" " if ch == "♥" else f"{ch}  ·  ") + n)
+                fmt = lambda x: f"{x:,}".replace(",", ".")
+                n = f"{fmt(max(1, min(pos, counts[ch])) if tot == counts[ch] else 1)}/{fmt(counts[ch])}"
+                b.setText((" " if ch == "♥" else f"{ch}  -  ") + n)
                 b.setFixedWidth(max(base, b.fontMetrics().horizontalAdvance(b.text()) + (44 if ch == "♥" else 26)))
             else:
                 b.setText("" if ch == "♥" else ch)
@@ -1403,6 +1410,7 @@ class LetterSections(QScrollArea):
     heart = Signal(object)
     lettersChanged = Signal(object)                            # {chữ: số người}
     currentLetter = Signal(str)                                # chữ của mục đang ở đầu vùng nhìn
+    positionChanged = Signal(int, int)                         # (thứ tự người đầu tiên đang thấy, tổng số người đang hiện): 1/200, hàng thứ 2 (3 người/hàng) là 4/200
 
     def __init__(self, size=128):
         super().__init__()
@@ -1436,6 +1444,22 @@ class LetterSections(QScrollArea):
             cur = list(self.heads)[-1]                       # cuối danh sách: mục cuối cùng có thể không kéo lên tới đầu vùng nhìn
         if cur is not None:
             self.currentLetter.emit(cur)
+        self.positionChanged.emit(*self._top_position())
+
+    def _top_position(self):
+        """Thứ tự (từ 1) của người ở đầu hàng đầu tiên đang nhìn thấy, và tổng số người đang hiện."""
+        v = self.verticalScrollBar().value()
+        total = sum(m.rowCount() for _, m in self.sections)
+        cum = 0
+        for grid, model in self.sections:
+            n = model.rowCount()
+            if n and grid.y() + grid.height() > v:
+                local = max(0, v - grid.y())
+                first_rect = grid.visualRect(model.index(0, 0))
+                ix = grid.indexAt(QPoint(first_rect.x() + 3, min(local + 3, max(0, grid.height() - 3))))
+                return (cum + (ix.row() if ix.isValid() else 0) + 1, total)
+            cum += n
+        return (1 if total else 0, total)
 
     def set_groups(self, groups):
         for lab, grid, _ in getattr(self, "_w", []):
@@ -1810,6 +1834,7 @@ class PeoplePage(Page):
         self.alpha.clicked.connect(self.open_person)
         self.alpha.menu.connect(lambda pos, g: self.person_menu(pos, g))
         self.alpha.heart.connect(self.toggle_heart)
+        self.alpha.positionChanged.connect(lambda pos, tot: self.tabs.set_position(pos, tot))
         self.tabs.picked.connect(self.pick_letter_tab)
         self.sec_toggle = {}
         for key, lab, grid in (("named", self.sec_n, self.alpha), ("guess", self.sec_s, self.sgrid), ("unnamed", self.sec_u, self.ugrid)):
@@ -2069,6 +2094,7 @@ class PeoplePage(Page):
             groups = [g for g in groups if g[0] != "#"] + [("#", hash_items)]
         self.alpha.set_groups(groups)
         self.tabs.set_letters(self._letters)
+        self.tabs.set_position(*self.alpha._top_position())
         self.tabs.set_current(self.letter or "All")
         self.smodel.set_items(gi)
         self.umodel.set_items(ui)
