@@ -1291,3 +1291,30 @@ def test_no_compare_half_when_candidate_has_no_profile_image(tmp_path, monkeypat
     page.cand_cards = [object()]
     page.cand_sel = {"name": "Chưa ai mang tên này", "pid": None}
     assert page.compare_for_viewer() is None                                 # tên chưa có người / chưa có ảnh profile: xem ảnh bình thường, không chia đôi
+
+
+def test_person_page_opens_on_all_tab_by_default(tmp_path, monkeypatch):
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    from pp.db import vec_to_blob
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import PeoplePage
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "dt"))
+    ctx = AppContext()
+    pids = []
+    for n in ("A", "B"):
+        pid = ctx.db.x("INSERT INTO persons(name) VALUES(?)", (n,)).lastrowid
+        iid = ctx.db.x("INSERT INTO images(path,mtime,size,w,h,thumb) VALUES(?,?,?,?,?,?)", (f"/d/{n}.jpg", 1, 1, 9, 9, "t")).lastrowid
+        ctx.db.x("INSERT INTO faces(image_id,x,y,w,h,score,px,vec,person_id,locked) VALUES(?,?,?,?,?,?,?,?,?,0)", (iid, .1, .1, .2, .2, .95, 80, vec_to_blob(np.ones(128, np.float32)), pid))
+        ctx.db.x("INSERT INTO cloth_group(image_id,grp,p) VALUES(?,?,1)", (iid, "nude"))
+        pids.append(pid)
+    page = PeoplePage(ctx)
+    page.pid = pids[0]
+    page.show_person()
+    assert page.cloth_row.value is None                                   # mặc định thẻ All
+    page.cloth_row.pick("nude")
+    assert page.cloth_row.value == "nude"
+    page.pid = pids[1]                                                    # mở người khác: lại bắt đầu ở All
+    page.show_person()
+    assert page.cloth_row.value is None

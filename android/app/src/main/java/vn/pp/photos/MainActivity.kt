@@ -1864,7 +1864,7 @@ fun PersonScreen(p: Person, openIn: (List<Img>, Int) -> Unit, onClassify: (Strin
     var dlg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val all = remember(Store.images, v) { Store.images.filter { Store.personOf[it.uid]?.contains(p.id) == true }.sortedByDescending { it.taken } }
-    var cloth by remember(p.id) { mutableStateOf<String?>(if (all.any { Store.clothing[it.uid] == "cloth" }) "cloth" else null) }      // mặc định mở thẻ Dressed (nếu người đó chưa có ảnh Dressed thì mở All)
+    var cloth by remember(p.id) { mutableStateOf<String?>(null) }      // mặc định mở thẻ All (đổi sang Dressed / Naked bằng ô dài phía trên)
     val clothMap = Store.clothing                                          // đọc trực tiếp: ảnh vừa chuyển loại biến khỏi danh sách ngay lập tức
     val list = if (cloth == null) all else all.filter { clothMap[it.uid] == cloth }
     val shownUids = remember(list) { list.map { it.uid }.toHashSet() }

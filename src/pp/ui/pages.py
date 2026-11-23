@@ -2409,6 +2409,12 @@ class PeoplePage(Page):
         if not r:
             self.back()
             return
+        if getattr(self, "_shown_pid", None) != self.pid:          # mở lưới ảnh của một người khác: luôn bắt đầu ở thẻ All
+            self._shown_pid = self.pid
+            self.cloth_row.blockSignals(True)
+            self.cloth_row.value = None
+            self.cloth_row._sync()
+            self.cloth_row.blockSignals(False)
         sg = self.ctx.db.one("SELECT name,n_arch FROM person_suggest WHERE person_id=?", (self.pid,)) if not r["name"] else None
         cands = self.ctx.db.q("SELECT name,score FROM person_candidates WHERE person_id=? ORDER BY score DESC LIMIT 3", (self.pid,)) if (not r["name"] and not sg) else []
         while self.cand_box.count():
