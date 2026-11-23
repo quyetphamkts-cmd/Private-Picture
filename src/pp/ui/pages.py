@@ -181,23 +181,26 @@ def _viewer_fav(ctx, it, toggle):
     return has
 
 
+VIEW_MAX = 2600          # xem ảnh: JPEG lớn hơn được giải mã ở độ phân giải giảm vừa đủ nét cho màn hình (mở nhanh hơn nhiều)
+
+
 def make_loader(ctx):
     def loader(it):
         if it.get("vid"):
-            return load_qimage(ctx.vault.read(it["vid"]))
+            return load_qimage(ctx.vault.read(it["vid"]), VIEW_MAX)
         if zipimg.is_zip_path(it["path"]):
             try:
-                return load_qimage(zipimg.read(it["path"], ctx.zip_passwords.get(zipimg.archive_of(it["path"]))))
+                return load_qimage(zipimg.read(it["path"], ctx.zip_passwords.get(zipimg.archive_of(it["path"]))), VIEW_MAX)
             except zipimg.PasswordNeeded:
                 raise RuntimeError("file nén cần mật khẩu (nhập ở Thư mục và quét)")
             except Exception:                                  # ảnh đã được dọn khỏi tệp nén (chỉ còn bản mã hóa trên Drive)
                 from .. import sync
-                return load_qimage(sync.read_archived(ctx.db, it["id"]))
+                return load_qimage(sync.read_archived(ctx.db, it["id"]), VIEW_MAX)
         try:
-            return load_qimage(it["path"])
+            return load_qimage(it["path"], VIEW_MAX)
         except FileNotFoundError:                   # ảnh gốc đã giải phóng khỏi PC: xem từ bản mã hóa trong thư mục đồng bộ
             from .. import sync
-            return load_qimage(sync.read_archived(ctx.db, it["id"]))
+            return load_qimage(sync.read_archived(ctx.db, it["id"]), VIEW_MAX)
     return loader
 
 

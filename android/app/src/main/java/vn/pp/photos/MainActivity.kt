@@ -2140,7 +2140,9 @@ fun ViewerScreen(listIn: List<Img>, start: Int, fromPerson: Person?, fromSuggest
         val curUid = list.getOrNull(cp)?.uid ?: return@LaunchedEffect
         var waited = 0
         while (waited < 60000 && !Store.originalReady(curUid)) { delay(100); waited += 100 }       // chờ ảnh đang xem xong đã
-        for (j in order) if (j in list.indices) { try { Store.original(list[j].uid) } catch (e: Exception) { } }
+        kotlinx.coroutines.coroutineScope {                         // nạp trước các ảnh kế bên SONG SONG (không lần lượt từng ảnh) để lướt tới là có ngay
+            for (j in order) if (j in list.indices) launch { try { Store.original(list[j].uid) } catch (e: Exception) { } }
+        }
     }
     // ẩn luôn thanh trạng thái và thanh điều hướng khi đang xem ảnh toàn màn hình
     val view = androidx.compose.ui.platform.LocalView.current

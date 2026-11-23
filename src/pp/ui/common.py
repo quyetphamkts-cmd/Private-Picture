@@ -24,9 +24,12 @@ def pil_to_qimage(im: Image.Image) -> QImage:
     return q.copy()
 
 
-def load_qimage(src) -> QImage:
-    """src là đường dẫn hoặc bytes. Dùng Pillow để đọc được cả HEIC và xoay đúng chiều ảnh."""
+def load_qimage(src, max_side=None) -> QImage:
+    """src là đường dẫn hoặc bytes. Dùng Pillow để đọc được cả HEIC và xoay đúng chiều ảnh.
+    max_side: ảnh JPEG lớn hơn mức này được giải mã ở độ phân giải giảm (nhanh gấp 2–4 lần, đủ nét cho màn hình); None = nguyên cỡ."""
     im = Image.open(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else src)
+    if max_side and im.format == "JPEG":
+        im.draft("RGB", (max_side, max_side))
     return pil_to_qimage(ImageOps.exif_transpose(im))
 
 

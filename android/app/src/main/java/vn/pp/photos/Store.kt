@@ -343,7 +343,7 @@ object Store {
     }
 
     /** Giữ tối đa 16 ảnh gốc đã tải gần nhất trên đĩa (nạp trước khi xem); xóa các ảnh cũ hơn. */
-    private fun trimOrigCache(keep: Int = 16) {
+    private fun trimOrigCache(keep: Int = 40) {
         val files = cache.listFiles { f -> f.name.startsWith("o-") }?.sortedByDescending { it.lastModified() } ?: return
         for (f in files.drop(keep)) f.delete()
     }
