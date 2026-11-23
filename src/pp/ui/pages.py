@@ -2397,6 +2397,8 @@ class PeoplePage(Page):
         if not c or not self.cand_cards:
             return None
         pm = self._cand_pixmap(c.get("pid"), big=True)
+        if pm is None or pm.isNull():                              # tên này chưa có người nào mang hoặc người đó chưa có ảnh profile: không hiện nửa so sánh
+            return None
         items = []
         if c.get("pid"):                                           # các ảnh khác của người đó để vuốt chuyển so sánh (tối đa 60, mới nhất trước)
             items = [img_item(x) for x in self.ctx.db.person_images(c["pid"])[:60]]

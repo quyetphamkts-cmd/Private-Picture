@@ -1276,3 +1276,18 @@ def test_letter_sections_report_first_visible_person_position(tmp_path, monkeypa
     pos, tot = ls._top_position()
     per = max(1, (ls.viewport().width() - 40) // ls.sections[0][0].gridSize().width())
     assert tot == 200 and pos == 2 * per + 1 and got and got[-1] == (pos, tot)
+
+
+def test_no_compare_half_when_candidate_has_no_profile_image(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from pp.ui.ctx import AppContext
+    from pp.ui.pages import PeoplePage
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("PP_HOME", str(tmp_path / "np"))
+    ctx = AppContext()
+    unk = ctx.db.x("INSERT INTO persons(name) VALUES(NULL)").lastrowid
+    page = PeoplePage(ctx)
+    page.pid = unk
+    page.cand_cards = [object()]
+    page.cand_sel = {"name": "Chưa ai mang tên này", "pid": None}
+    assert page.compare_for_viewer() is None                                 # tên chưa có người / chưa có ảnh profile: xem ảnh bình thường, không chia đôi

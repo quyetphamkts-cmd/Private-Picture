@@ -1880,7 +1880,7 @@ fun PersonScreen(p: Person, openIn: (List<Img>, Int) -> Unit, onClassify: (Strin
         if (c.id == 0) hint = "“${c.name}” chưa có trang riêng: hãy đặt tên cho nhóm này trên PC."
         else if (ids.isNotEmpty()) onConfirm(c, ids)
     }
-    val open: (List<Img>, Int) -> Unit = { l, i -> Store.compareCand = if (hasCands) candSel else null; openIn(l, i) }
+    val open: (List<Img>, Int) -> Unit = { l, i -> Store.compareCand = if (hasCands) candSel?.takeIf { it.id != 0 && Store.covers[it.id] != null } else null; openIn(l, i) }       // chưa có ảnh profile: không chia đôi để so sánh
     // trang xem ảnh của một người: KHÔNG có tiêu đề tên (bên ngoài đã có), ảnh chiếm trọn màn hình; các nút tròn nổi phía trên ảnh
     Box(Modifier.fillMaxSize()) {
         val acts: @Composable RowScope.(List<String>, () -> Unit, (Set<String>) -> Unit) -> Unit = { _, _, _ -> }
