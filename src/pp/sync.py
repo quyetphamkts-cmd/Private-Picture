@@ -398,7 +398,8 @@ def apply_inbox(db, dest, key):
                 name = op["name"].strip()
                 uids_in = [by_uid[u] for u in (op.get("image_uids") or []) if u in by_uid]
                 if uids_in and _newer(db, f"pcreate:{name}|{min(uids_in)}", ts):
-                    r = db.one("SELECT id FROM persons WHERE name=? COLLATE NOCASE AND hidden=0", (name,))
+                    r = next((x for x in db.q("SELECT id,name FROM persons WHERE name IS NOT NULL AND hidden=0 ORDER BY id")
+                              if cluster.fold(x["name"]) == cluster.fold(name)), None)         # trùng tên (không phân biệt dấu/hoa thường): dùng người đã có
                     pid = r["id"] if r else db.x("INSERT INTO persons(name) VALUES(?)", (name,)).lastrowid
                     cluster.assign_images_to_person(db, uids_in, pid)        # tạo người mới (hoặc dùng người cùng tên) và thêm các ảnh đã chọn
                     _stamp(db, [f"pcreate:{name}|{min(uids_in)}"], ts)
@@ -461,6 +462,8 @@ def apply_inbox(db, dest, key):
             pass
     db.c.execute("DELETE FROM inbox_done WHERE ts<?", (time.time() - 7 * 86400,))
     db.commit()
+    if n:
+        cluster.merge_same_name(db)                          # điện thoại vừa tạo/đổi tên: hai người trùng tên thì gộp thành một
     return n
 
 

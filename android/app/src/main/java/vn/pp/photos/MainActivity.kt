@@ -801,7 +801,7 @@ fun PersonPickDialog(onPick: (Person) -> Unit, onCreate: (String) -> Unit, onDis
                     OutlinedTextField(q, { q = it }, label = { Text("Tìm hoặc nhập tên") }, singleLine = true, modifier = Modifier.weight(1f))
                     val can = q.isNotBlank()
                     Box(Modifier.padding(start = 8.dp).size(44.dp).clip(CircleShape).background(if (can) Brass else Color(0x33888888))
-                        .clickable(enabled = can) { onCreate(q.trim()) }, contentAlignment = Alignment.Center) {
+                        .clickable(enabled = can) { val ex = all.firstOrNull { foldVi(it.name) == key }; if (ex != null) onPick(ex) else onCreate(q.trim()) }, contentAlignment = Alignment.Center) {
                         KindIcon("plus", Color.White, 22.dp)
                     }
                 }

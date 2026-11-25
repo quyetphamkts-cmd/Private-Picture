@@ -1989,6 +1989,8 @@ class PeoplePage(Page):
             bg = bool(getattr(self.ctx, "busy_fn", None) and self.ctx.busy_fn())
         except Exception:
             pass
+        if not bg:
+            cluster.merge_same_name(db)               # hai người trùng tên (đã lỡ tạo) tự gộp thành một
         if pend and not bg and len(pend) <= 300 and len(pend) != getattr(self, "_pend_seen", -1) and not getattr(self, "_busy", False):
             self._busy = True
             try:
