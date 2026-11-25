@@ -1984,14 +1984,16 @@ class PeoplePage(Page):
         rows = db.q("""SELECT id FROM faces WHERE person_id IS NULL AND locked=0 AND px>=?
                        AND id NOT IN (SELECT face_id FROM face_reject)""", (cluster.MIN_FACE_PX,))
         pend = [r["id"] for r in rows]
-        if pend and len(pend) != getattr(self, "_pend_seen", -1) and not getattr(self, "_busy", False):
+        bg = False                                # app đang quét/gom ở luồng nền: không làm việc nặng ở luồng giao diện (mở tab Model sẽ bị đơ)
+        try:
+            bg = bool(getattr(self.ctx, "busy_fn", None) and self.ctx.busy_fn())
+        except Exception:
+            pass
+        if pend and not bg and len(pend) <= 300 and len(pend) != getattr(self, "_pend_seen", -1) and not getattr(self, "_busy", False):
             self._busy = True
             try:
-                if len(pend) <= 300:
-                    cluster.attach_to_named(db)
-                    cluster.reassign_faces(db, pend)
-                else:
-                    cluster.cluster_faces(db, self.sl.value() / 100)
+                cluster.attach_to_named(db)
+                cluster.reassign_faces(db, pend)
             finally:
                 self._busy = False
                 self._pend_seen = db.one("""SELECT COUNT(*) c FROM faces WHERE person_id IS NULL AND locked=0 AND px>=?

@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
     def __init__(self, ctx=None):
         super().__init__()
         self.ctx = ctx or AppContext()
+        self.ctx.busy_fn = self.busy                    # trang Model hỏi: đang quét/gom ở nền thì đừng làm việc nặng ở luồng giao diện
         self.locking = False
         self.restart_after = False
         from .. import __version__
